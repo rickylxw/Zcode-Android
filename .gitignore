@@ -1,0 +1,22 @@
+# Android / Gradle
+.gradle/
+build/
+local.properties
+
+# IDE
+*.iml
+.idea/
+
+# 桥接服务
+bridge/node_modules/
+bridge/server-test.log
+bridge/bridge.config.json
+
+# 签名密钥：绝不提交仓库（CI 从 Secrets 读取，见 .github/workflows/release.yml）
+app/release.jks
+*.jks
+
+# 本地临时
+probe/
+.capture/
+.tools/

@@ -1,0 +1,17 @@
+{
+  "name": "zcode-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ZCode Android 桥接服务：在 PC 上以无头模式驱动 ZCode CLI，并通过 REST/WebSocket 供手机 App 连接",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=23.4"
+  }
+}
