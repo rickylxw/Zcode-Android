@@ -41,15 +41,26 @@ else
 fi
 
 step "3/6 推送 main + 标签 $TAG"
+git remote remove origin 2>/dev/null || true
+git remote add origin "https://github.com/$REPO.git"
 git "${GIT_PROXY[@]}" push -u origin main 2>&1 | tail -2
 git "${GIT_PROXY[@]}" push origin "$TAG" 2>&1 | tail -2
 
 step "4/6 配置 Actions Secrets（keystore + 密码）"
 SECRETS_DIR=$(mktemp -d)
 trap 'rm -rf "$SECRETS_DIR"' EXIT
-npm --prefix "$SECRETS_DIR" install libsodium-wrappers --silent --no-fund --no-audit
-cd "$SECRETS_DIR" && npm link libsodium-wrappers >/dev/null 2>&1; cd - >/dev/null
-export NODE_PATH="$SECRETS_DIR/node_modules"
+npm --prefix "$SECRETS_DIR" install libsodium-wrappers --silent --no-fund --no-audit >/dev/null 2>&1
+cat > "$SECRETS_DIR/encrypt.js" <<'EOF'
+// 用法：node encrypt.js <仓库公钥hex> <明文文件路径>  → 输出 sealed box 的 base64
+const sodium = require('libsodium-wrappers');
+const fs = require('fs');
+(async () => {
+  await sodium.ready;
+  const pk = sodium.from_base64(process.argv[2], sodium.base64_variants.ORIGINAL);
+  const msg = fs.readFileSync(process.argv[3]);
+  process.stdout.write(Buffer.from(sodium.crypto_box_seal(msg, pk)).toString('base64'));
+})();
+EOF
 
 PUBKEY_JSON=$("${CURL[@]}" -H "Authorization: token $TOKEN" -H "User-Agent: zcode-publish" "https://api.github.com/repos/$REPO/actions/secrets/public-key")
 KEY_ID=$(node -e "console.log(JSON.parse(process.argv[1]).key_id)" "$PUBKEY_JSON")
@@ -57,14 +68,9 @@ PUBKEY=$(node -e "console.log(JSON.parse(process.argv[1]).key)" "$PUBKEY_JSON")
 [ -n "$KEY_ID" ] && [ -n "$PUBKEY" ] || { echo "  ✗ 获取仓库公钥失败：$PUBKEY_JSON"; exit 1; }
 
 put_secret() { # $1=name $2=plaintext（明文字符串，按 UTF-8 字节加密）
+  printf '%s' "$2" > "$SECRETS_DIR/plain.bin"
   local enc
-  enc=$(PLAIN="$2" PK="$PUBKEY" node -e "
-    const s=require('libsodium-wrappers');
-    (async()=>{await s.ready;
-      const pk=s.from_hex(process.env.PK);
-      const msg=s.from_string(process.env.PLAIN);
-      console.log(Buffer.from(s.crypto_box_seal(msg,pk)).toString('base64'));
-    })();")
+  enc=$(cd "$SECRETS_DIR" && node encrypt.js "$PUBKEY" plain.bin)
   local code
   code=$("${CURL[@]}" -o /dev/null -w "%{http_code}" -X PUT \
     -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
