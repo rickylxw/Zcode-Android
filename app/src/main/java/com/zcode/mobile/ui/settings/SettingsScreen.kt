@@ -236,11 +236,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenConnect: () -> Unit) {
                         }
                         if (u.info.notes.isNotBlank()) {
                             Spacer(Modifier.height(6.dp))
-                            Text(
-                                u.info.notes.take(600),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                            com.zcode.mobile.ui.chat.AssistantText(u.info.notes)
                         }
                         Spacer(Modifier.height(10.dp))
                         Button(onClick = { downloadAndInstall(u.info) }, modifier = Modifier.fillMaxWidth()) {

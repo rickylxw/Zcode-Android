@@ -41,11 +41,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.mikepenz.markdown.m3.Markdown
 import com.zcode.mobile.data.BlockDto
 
 /**
- * 助手消息的轻量渲染：按 ``` 代码围栏切分，代码块深底等宽 + 复制按钮；
- * 其余按原样多行文本。
+ * 助手消息渲染：按 ``` 代码围栏切分——代码块用自带复制按钮的深底样式，
+ * 其余（标题/加粗/列表/链接/行内代码/表格等）交给 Markdown 库渲染。
  */
 @Composable
 fun AssistantText(text: String) {
@@ -53,18 +54,15 @@ fun AssistantText(text: String) {
         val segments = splitFences(text)
         segments.forEach { seg ->
             if (seg.isCode) {
-                CodeBlock(seg.content.trimEnd('\n'))
+                CodeBlock(seg.content.trim('\n'), seg.lang)
             } else if (seg.content.isNotBlank()) {
-                Text(
-                    seg.content.trim('\n'),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+                Markdown(seg.content.trim('\n'))
             }
         }
     }
 }
 
-private data class Seg(val isCode: Boolean, val content: String)
+private data class Seg(val isCode: Boolean, val content: String, val lang: String? = null)
 
 private fun splitFences(text: String): List<Seg> {
     if (!text.contains("```")) return listOf(Seg(false, text))
@@ -79,20 +77,22 @@ private fun splitFences(text: String): List<Seg> {
         if (start > 0) out.add(Seg(false, rest.substring(0, start)))
         val bodyStart = start + 3
         val lineEnd = rest.indexOf('\n', bodyStart)
+        val lang = (if (lineEnd >= 0) rest.substring(bodyStart, lineEnd) else "")
+            .trim().takeWhile { !it.isWhitespace() }.takeIf { it.isNotEmpty() }
         val codeStart = if (lineEnd >= 0) lineEnd + 1 else bodyStart // 跳过语言标注行
         val end = rest.indexOf("```", codeStart)
         if (end < 0) {
-            out.add(Seg(true, rest.substring(codeStart)))
+            out.add(Seg(true, rest.substring(codeStart), lang))
             break
         }
-        out.add(Seg(true, rest.substring(codeStart, end)))
+        out.add(Seg(true, rest.substring(codeStart, end), lang))
         rest = rest.substring(end + 3)
     }
     return out
 }
 
 @Composable
-fun CodeBlock(code: String) {
+fun CodeBlock(code: String, lang: String? = null) {
     val context = LocalContext.current
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerHighest,
@@ -103,8 +103,13 @@ fun CodeBlock(code: String) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(start = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.End,
             ) {
+                Text(
+                    lang ?: "代码",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontFamily = FontFamily.Monospace,
+                )
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = { copyToClipboard(context, code) }, modifier = Modifier.height(32.dp)) {
                     Icon(

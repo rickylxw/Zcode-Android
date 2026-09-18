@@ -12,8 +12,8 @@ android {
         applicationId = "com.zcode.mobile"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.2.1"
     }
 
     // 签名密钥不进仓库：本地构建用 app/release.jks（见 README「发布」），
@@ -64,5 +64,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons)
+    implementation(libs.markdown.renderer)
+    implementation(libs.markdown.renderer.m3)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
