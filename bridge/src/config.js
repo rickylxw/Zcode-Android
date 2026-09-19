@@ -26,9 +26,30 @@ export const paths = {
   cliDir: path.join(zcodeHome, 'cli'),
   cliConfig: path.join(zcodeHome, 'cli', 'config.json'),
   v2Config: path.join(zcodeHome, 'v2', 'config.json'),
+  v2ProviderConfig: path.join(zcodeHome, 'v2', 'provider_config.json'),
+  tasksIndex: path.join(zcodeHome, 'v2', 'tasks-index.sqlite'),
   db: path.join(zcodeHome, 'cli', 'db', 'db.sqlite'),
   logDir: path.join(zcodeHome, 'cli', 'log'),
 };
+
+/**
+ * ZCode 桌面安装目录里的内置 provider 目录（zcode-builtin.json，定义 bigmodel、start-plan 等）。
+ * CLI 0.16.9 起无头运行若缺少 ZCODE_BUILTIN_PROVIDER_CONFIG_FILE，resume 引用 builtin 或
+ * account 前缀 provider 的会话会报「无法定位 builtin provider config / Model creation failed」。
+ */
+export function builtinProviderCatalog() {
+  const candidates = [
+    path.resolve(path.dirname(paths.zcodeCjs), '..', 'config', 'provider', 'zcode-builtin.json'),
+    path.join(path.parse(paths.zcodeCjs).root, 'Program Files', 'ZCode', 'resources', 'config', 'provider', 'zcode-builtin.json'),
+  ];
+  if (process.env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE) candidates.unshift(process.env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE);
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) return p;
+    } catch {}
+  }
+  return null;
+}
 
 /**
  * ZCode CLI 独立无头运行（不经桌面 App 注入配置）时必须有 ~/.zcode/cli/config.json，

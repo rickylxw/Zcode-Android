@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { paths } from './config.js';
 
@@ -17,6 +18,40 @@ function getDb() {
   return db;
 }
 
+/**
+ * 桌面端的任务索引（~/.zcode/v2/tasks-index.sqlite）。
+ * 桌面删除会话时会把行从 tasks 表移除（无 deleted 标记），而 db.sqlite 仍保留原始会话——
+ * 所以「不在索引里」= 已删除。但无头新建的会话要等桌面同步后才进索引（可能滞后），
+ * 因此对最近 24h 内的会话做宽限：一律显示。索引文件不存在时（别的机器）不过滤。
+ */
+const INDEX_GRACE_MS = 24 * 3600 * 1000;
+let tasksAliveCache = null;
+let tasksAliveAt = 0;
+
+function tasksAliveSet() {
+  const file = paths.tasksIndex;
+  if (!fs.existsSync(file)) return null;
+  const now = Date.now();
+  if (tasksAliveCache && now - tasksAliveAt < 10_000) return tasksAliveCache;
+  try {
+    const ti = new DatabaseSync(file, { readOnly: true });
+    const rows = ti.prepare('SELECT task_id FROM tasks WHERE deleted = 0 AND archived = 0').all();
+    ti.close();
+    tasksAliveCache = new Set(rows.map((r) => r.task_id));
+    tasksAliveAt = now;
+    return tasksAliveCache;
+  } catch {
+    return null;
+  }
+}
+
+/** 会话是否应展示：在桌面索引里，或索引不可用，或 24h 内新建（索引滞后宽限） */
+function isVisible(row) {
+  const alive = tasksAliveSet();
+  if (!alive) return true;
+  return alive.has(row.id) || Date.now() - row.time_updated < INDEX_GRACE_MS;
+}
+
 export function listSessions({ directory, limit = 200 } = {}) {
   const rows = directory
     ? getDb()
@@ -26,7 +61,7 @@ export function listSessions({ directory, limit = 200 } = {}) {
            FROM session WHERE directory = ? AND parent_id IS NULL
            ORDER BY time_updated DESC LIMIT ?`
         )
-        .all(directory, limit)
+        .all(directory, limit * 2)
     : getDb()
         .prepare(
           `SELECT id, title, directory, parent_id, summary_additions, summary_deletions, summary_files,
@@ -34,8 +69,8 @@ export function listSessions({ directory, limit = 200 } = {}) {
            FROM session WHERE parent_id IS NULL
            ORDER BY time_updated DESC LIMIT ?`
         )
-        .all(limit);
-  return rows.map(rowToSession);
+        .all(limit * 2);
+  return rows.filter(isVisible).slice(0, limit).map(rowToSession);
 }
 
 export function getSession(id) {
@@ -50,13 +85,31 @@ export function getSession(id) {
 }
 
 export function listProjects() {
-  return getDb()
+  const rows = getDb()
     .prepare(
       `SELECT directory, COUNT(*) AS sessionCount, MAX(time_updated) AS lastActive
        FROM session WHERE parent_id IS NULL
-       GROUP BY directory ORDER BY lastActive DESC LIMIT 100`
+       GROUP BY directory ORDER BY lastActive DESC LIMIT 200`
     )
     .all();
+  return rows
+    .map((r) => {
+      // 用过滤后的口径统计，保证与手机会话列表一致
+      const visible = getDb()
+        .prepare(
+          `SELECT id, time_updated FROM session WHERE parent_id IS NULL AND directory = ?`
+        )
+        .all(r.directory)
+        .filter(isVisible);
+      return {
+        directory: r.directory,
+        sessionCount: visible.length,
+        lastActive: visible.length ? Math.max(...visible.map((v) => v.time_updated)) : 0,
+      };
+    })
+    .filter((r) => r.sessionCount > 0)
+    .sort((a, b) => b.lastActive - a.lastActive)
+    .slice(0, 100);
 }
 
 /**

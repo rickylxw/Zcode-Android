@@ -1,11 +1,27 @@
 import { spawn, execFile } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { paths } from './config.js';
+import { builtinProviderCatalog, paths } from './config.js';
 
 const DEFAULT_MODE = 'yolo'; // 无头模式下 CLI 默认即 yolo；手机端可选 plan/build/edit
 const TURN_TIMEOUT_MS = 30 * 60 * 1000;
 const VALID_MODES = new Set(['build', 'edit', 'plan', 'yolo']);
+
+/**
+ * 复刻桌面端启动 agent 时的关键环境：
+ * - ZCODE_BUILTIN_PROVIDER_CONFIG_FILE：内置 provider 目录（zcode-builtin.json）。
+ *   CLI 0.16.9 起缺了它，resume 引用 builtin 或 account 前缀 provider 的会话会报
+ *   「无法定位 builtin provider config」或「Model creation failed」。
+ * - ZCODE_PERSONAL_PROVIDER_CONFIG_FILE：桌面端个人 provider 规则（v2/provider_config.json）。
+ *   OAuth 凭据无需传递——CLI 直接读 ~/.zcode/v2/credentials.json，密钥按机器+用户推导。
+ */
+function headlessEnv() {
+  const env = { ...process.env };
+  const catalog = builtinProviderCatalog();
+  if (catalog) env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE = catalog;
+  if (fs.existsSync(paths.v2ProviderConfig)) env.ZCODE_PERSONAL_PROVIDER_CONFIG_FILE = paths.v2ProviderConfig;
+  return env;
+}
 
 /**
  * 回合任务注册表。
@@ -73,6 +89,7 @@ export function runTurn({ sessionId = null, directory, prompt, mode = DEFAULT_MO
       cwd: directory,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: headlessEnv(),
     });
 
     const job = {
@@ -114,7 +131,7 @@ export function runTurn({ sessionId = null, directory, prompt, mode = DEFAULT_MO
       cleanup();
       if (code !== 0) {
         const tail = stderr.trim().split('\n').slice(-8).join('\n');
-        return reject(new Error(`ZCode 退出码 ${code}: ${tail || '无错误输出'}`));
+        return reject(new Error(`ZCode 退出码 ${code}: ${tailnote(tail) || '无错误输出'}`));
       }
       let parsed;
       try {
@@ -130,4 +147,17 @@ export function runTurn({ sessionId = null, directory, prompt, mode = DEFAULT_MO
       });
     });
   });
+}
+
+/** 在原始报错后追加面向用户的处置建议 */
+function tailnote(tail) {
+  if (!tail) return tail;
+  if (/Model creation failed|Select a model|无法定位.*provider|provider config/i.test(tail)) {
+    return (
+      tail +
+      '\n提示：该会话绑定的模型当前不可用（常见于订阅版 start-plan 模型的旧会话，或 CLI 升级后 provider 变更）。' +
+      '解决办法：在电脑端 ZCode 打开该会话切换一次模型，或从手机「新任务」发起新会话。'
+    );
+  }
+  return tail;
 }
