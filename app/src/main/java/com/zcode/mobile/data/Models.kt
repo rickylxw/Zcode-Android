@@ -22,6 +22,8 @@ data class SessionDto(
     val timeCreated: Long = 0,
     val timeUpdated: Long = 0,
     val running: Boolean = false,
+    val archived: Boolean = false,
+    val archivedAt: Long? = null,
 )
 
 @Serializable

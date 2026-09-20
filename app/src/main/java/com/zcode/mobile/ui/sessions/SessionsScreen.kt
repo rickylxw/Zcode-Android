@@ -16,9 +16,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
@@ -54,6 +56,7 @@ import kotlinx.coroutines.launch
 data class SessionsUiState(
     val loading: Boolean = true,
     val refreshing: Boolean = false,
+    val showArchived: Boolean = false, // 当前是否处于归档视图
     val groups: List<Pair<String, List<SessionDto>>> = emptyList(), // (directory, sessions)
     val error: String? = null,
     val update: com.zcode.mobile.data.UpdateChecker.UpdateInfo? = null, // 发现的新版本（24h 自动检查）
@@ -80,6 +83,30 @@ class SessionsViewModel(private val container: com.zcode.mobile.AppContainer) : 
         }
     }
 
+    /** 切换 会话列表 / 归档列表 */
+    fun toggleArchivedView() {
+        val next = !_state.value.showArchived
+        _state.value = _state.value.copy(showArchived = next, loading = _state.value.groups.isNotEmpty())
+        refresh(initial = true)
+    }
+
+    fun refresh(initial: Boolean = false) {
+        viewModelScope.launch {
+            val archived = _state.value.showArchived
+            _state.value = _state.value.copy(loading = initial && _state.value.groups.isEmpty(), refreshing = true, error = null)
+            try {
+                val sessions = container.api.sessions(archived = archived)
+                val groups = sessions.groupBy { it.directory }
+                    .entries
+                    .sortedByDescending { e -> e.value.maxOf { it.timeUpdated } }
+                    .map { (dir, list) -> dir to list.sortedByDescending { it.timeUpdated } }
+                _state.value = _state.value.copy(loading = false, refreshing = false, groups = groups)
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(loading = false, refreshing = false, error = e.message ?: "加载失败")
+            }
+        }
+    }
+
     /** 每 24 小时静默检查一次更新；失败不打扰 */
     private fun autoCheckUpdate() {
         viewModelScope.launch {
@@ -99,22 +126,6 @@ class SessionsViewModel(private val container: com.zcode.mobile.AppContainer) : 
             }
         }
     }
-
-    fun refresh(initial: Boolean = false) {
-        viewModelScope.launch {
-            _state.value = _state.value.copy(loading = initial && _state.value.groups.isEmpty(), refreshing = true, error = null)
-            try {
-                val sessions = container.api.sessions()
-                val groups = sessions.groupBy { it.directory }
-                    .entries
-                    .sortedByDescending { e -> e.value.maxOf { it.timeUpdated } }
-                    .map { (dir, list) -> dir to list.sortedByDescending { it.timeUpdated } }
-                _state.value = _state.value.copy(loading = false, refreshing = false, groups = groups)
-            } catch (e: Exception) {
-                _state.value = _state.value.copy(loading = false, refreshing = false, error = e.message ?: "加载失败")
-            }
-        }
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -130,11 +141,17 @@ fun SessionsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("会话") },
+                title = { Text(if (s.showArchived) "归档" else "会话") },
                 actions = {
                     IconButton(onClick = { vm.refresh() }) {
                         if (s.refreshing) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                         else Icon(Icons.Filled.Refresh, contentDescription = "刷新")
+                    }
+                    IconButton(onClick = { vm.toggleArchivedView() }) {
+                        Icon(
+                            if (s.showArchived) Icons.Filled.Unarchive else Icons.Filled.Archive,
+                            contentDescription = if (s.showArchived) "返回会话列表" else "查看归档",
+                        )
                     }
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = "设置")
@@ -143,8 +160,10 @@ fun SessionsScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = onNewTask) {
-                Icon(Icons.Filled.Add, contentDescription = "新任务")
+            if (!s.showArchived) {
+                FloatingActionButton(onClick = onNewTask) {
+                    Icon(Icons.Filled.Add, contentDescription = "新任务")
+                }
             }
         },
     ) { padding ->
@@ -208,7 +227,11 @@ fun SessionsScreen(
                     if (s.groups.isEmpty()) {
                         item {
                             Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
-                                Text("还没有会话，点右下角发起第一个任务", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    if (s.showArchived) "暂无归档会话\n（在会话的 ⋮ 菜单里可归档）" else "还没有会话，点右下角发起第一个任务",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
                             }
                         }
                     }

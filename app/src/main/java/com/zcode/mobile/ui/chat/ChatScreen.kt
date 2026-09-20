@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -70,6 +71,7 @@ fun ChatScreen(sessionId: String, onBack: () -> Unit) {
     val s by vm.state.collectAsState()
     val snackbar = remember { SnackbarHostState() }
     val listState = rememberLazyListState()
+    var menuExpanded by remember { mutableStateOf(false) }
 
     LaunchedEffect(s.messages.size, s.liveSteps.size) {
         val total = s.messages.size * 4 + s.liveSteps.size + 1 // 每条消息可能展开为多项
@@ -108,6 +110,22 @@ fun ChatScreen(sessionId: String, onBack: () -> Unit) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },
+                actions = {
+                    Box {
+                        IconButton(onClick = { menuExpanded = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = "更多")
+                        }
+                        DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                            DropdownMenuItem(
+                                text = { Text(if (s.session?.archived == true) "取消归档" else "归档会话") },
+                                onClick = {
+                                    menuExpanded = false
+                                    vm.toggleArchive()
+                                },
+                            )
+                        }
+                    }
+                },
             )
         },
     ) { padding ->
@@ -118,6 +136,13 @@ fun ChatScreen(sessionId: String, onBack: () -> Unit) {
         if (s.error != null && s.messages.isEmpty()) {
             ErrorBox(s.error ?: "")
             return@Scaffold
+        }
+        // 归档成功 → 返回列表（列表会因 session_updated 自动刷新）
+        LaunchedEffect(s.archivedRequested) {
+            if (s.archivedRequested) {
+                vm.consumeArchiveRequest()
+                onBack()
+            }
         }
 
         Column(

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
+import * as archive from './archive.js';
 import { paths } from './config.js';
 
 /**
@@ -20,39 +21,44 @@ function getDb() {
 
 /**
  * 桌面端的任务索引（~/.zcode/v2/tasks-index.sqlite）。
- * 桌面删除会话时会把行从 tasks 表移除（无 deleted 标记），而 db.sqlite 仍保留原始会话——
- * 所以「不在索引里」= 已删除。但无头新建的会话要等桌面同步后才进索引（可能滞后），
- * 因此对最近 24h 内的会话做宽限：一律显示。索引文件不存在时（别的机器）不过滤。
+ * 桌面删除会话 = 从索引移除行（db.sqlite 仍保留）→「不在索引」= 已删除，
+ * 但无头新建的会话要等桌面同步才进索引，所以 24h 内的新会话宽限显示。
+ * 桌面归档（archived=1）与手机归档打通：都算已归档，主列表隐藏、归档视图可见。
+ * 索引文件不存在时不过滤。
  */
 const INDEX_GRACE_MS = 24 * 3600 * 1000;
-let tasksAliveCache = null;
-let tasksAliveAt = 0;
+let indexCache = null;
+let indexAt = 0;
 
-function tasksAliveSet() {
-  const file = paths.tasksIndex;
-  if (!fs.existsSync(file)) return null;
+/** 桌面任务索引：task_id -> archived 标志（仅 deleted=0 的行）；无索引文件返回 null */
+function taskIndex() {
+  if (!fs.existsSync(paths.tasksIndex)) return null;
   const now = Date.now();
-  if (tasksAliveCache && now - tasksAliveAt < 10_000) return tasksAliveCache;
+  if (indexCache && now - indexAt < 10_000) return indexCache;
   try {
-    const ti = new DatabaseSync(file, { readOnly: true });
-    const rows = ti.prepare('SELECT task_id FROM tasks WHERE deleted = 0 AND archived = 0').all();
+    const ti = new DatabaseSync(paths.tasksIndex, { readOnly: true });
+    const rows = ti.prepare('SELECT task_id, archived FROM tasks WHERE deleted = 0').all();
     ti.close();
-    tasksAliveCache = new Set(rows.map((r) => r.task_id));
-    tasksAliveAt = now;
-    return tasksAliveCache;
+    indexCache = new Map(rows.map((r) => [r.task_id, r.archived]));
+    indexAt = now;
+    return indexCache;
   } catch {
     return null;
   }
 }
 
-/** 会话是否应展示：在桌面索引里，或索引不可用，或 24h 内新建（索引滞后宽限） */
-function isVisible(row) {
-  const alive = tasksAliveSet();
-  if (!alive) return true;
-  return alive.has(row.id) || Date.now() - row.time_updated < INDEX_GRACE_MS;
+/** 未被桌面删除：在索引里，或索引不可用，或 24h 宽限内的新会话 */
+function notDeleted(row, index) {
+  return index == null || index.has(row.id) || Date.now() - row.time_updated < INDEX_GRACE_MS;
 }
 
-export function listSessions({ directory, limit = 200 } = {}) {
+/** 归档 = 手机侧归档（archive.json）或 桌面端归档（tasks-index archived=1） */
+export function isSessionArchived(id) {
+  return archive.isArchived(id) || taskIndex()?.get(id) === 1;
+}
+
+export function listSessions({ directory, limit = 200, archived = false } = {}) {
+  const index = taskIndex();
   const rows = directory
     ? getDb()
         .prepare(
@@ -70,7 +76,11 @@ export function listSessions({ directory, limit = 200 } = {}) {
            ORDER BY time_updated DESC LIMIT ?`
         )
         .all(limit * 2);
-  return rows.filter(isVisible).slice(0, limit).map(rowToSession);
+  return rows
+    .filter((r) => notDeleted(r, index))
+    .filter((r) => isSessionArchived(r.id) === archived)
+    .slice(0, limit)
+    .map(rowToSession);
 }
 
 export function getSession(id) {
@@ -85,6 +95,7 @@ export function getSession(id) {
 }
 
 export function listProjects() {
+  const index = taskIndex();
   const rows = getDb()
     .prepare(
       `SELECT directory, COUNT(*) AS sessionCount, MAX(time_updated) AS lastActive
@@ -94,13 +105,13 @@ export function listProjects() {
     .all();
   return rows
     .map((r) => {
-      // 用过滤后的口径统计，保证与手机会话列表一致
+      // 与会话列表同口径：排除已删除与已归档
       const visible = getDb()
         .prepare(
           `SELECT id, time_updated FROM session WHERE parent_id IS NULL AND directory = ?`
         )
         .all(r.directory)
-        .filter(isVisible);
+        .filter((v) => notDeleted(v, index) && !isSessionArchived(v.id));
       return {
         directory: r.directory,
         sessionCount: visible.length,

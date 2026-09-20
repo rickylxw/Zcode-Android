@@ -21,3 +21,4 @@ probe/
 .capture/
 .tools/
 bridge/server.log
+bridge/archive.json

@@ -23,6 +23,7 @@ data class ChatUiState(
     val models: List<String> = emptyList(),
     val selectedModel: String? = null, // null = 电脑默认
     val lastUsage: String? = null, // 上一回合的 token 用量摘要
+    val archivedRequested: Boolean = false, // 归档成功，请求退出当前页面
 )
 
 /**
@@ -50,6 +51,23 @@ class ChatViewModel(
 
     fun consumeNotice() {
         _state.value = _state.value.copy(notice = null)
+    }
+
+    /** 归档 / 取消归档（桌面端归档的会话由桥接返回 409 提示） */
+    fun toggleArchive() {
+        val cur = _state.value.session?.archived == true
+        viewModelScope.launch {
+            try {
+                container.api.setArchived(sessionId, !cur)
+                _state.value = _state.value.copy(archivedRequested = true)
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(notice = e.message ?: "操作失败")
+            }
+        }
+    }
+
+    fun consumeArchiveRequest() {
+        _state.value = _state.value.copy(archivedRequested = false)
     }
 
     private fun loadModels() {

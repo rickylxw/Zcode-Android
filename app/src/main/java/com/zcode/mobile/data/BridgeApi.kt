@@ -35,10 +35,18 @@ class BridgeApi(private val settings: SettingsRepo) {
         return request<ProjectsResp>(url, token, "GET", "/api/projects", null).projects
     }
 
-    suspend fun sessions(directory: String? = null): List<SessionDto> {
+    suspend fun sessions(directory: String? = null, archived: Boolean = false): List<SessionDto> {
         val (url, token) = requireConfig()
-        val query = if (directory != null) "?directory=${java.net.URLEncoder.encode(directory, "UTF-8")}" else ""
-        return request<SessionsResp>(url, token, "GET", "/api/sessions$query", null).sessions
+        val parts = mutableListOf<String>()
+        if (directory != null) parts.add("directory=" + java.net.URLEncoder.encode(directory, "UTF-8"))
+        parts.add("archived=" + if (archived) "1" else "0")
+        return request<SessionsResp>(url, token, "GET", "/api/sessions?" + parts.joinToString("&"), null).sessions
+    }
+
+    /** 归档 / 取消归档（桌面端归档的会话无法在手机上取消，桥接会返回 409 说明） */
+    suspend fun setArchived(id: String, archived: Boolean) {
+        val (url, token) = requireConfig()
+        request<StopResp>(url, token, "POST", "/api/sessions/$id/archive", """{"archived":$archived}""")
     }
 
     suspend fun sessionDetail(id: String): SessionDetailDto {

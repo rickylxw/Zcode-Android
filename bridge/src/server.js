@@ -3,13 +3,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { ensureCliConfig, lanAddresses, loadBridgeConfig, paths } from './config.js';
+import * as archive from './archive.js';
 import { LogTail } from './logtail.js';
 import { listModels } from './selection.js';
 import * as store from './store.js';
 import { getJob, pendingNewJobs, runTurn, runningJobForSession, stopJob } from './zcode.js';
 
 const bridgeRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const BRIDGE_VERSION = '0.2.0';
+const BRIDGE_VERSION = '0.2.1';
 
 const cfg = loadBridgeConfig(bridgeRoot);
 const bootInfo = ensureCliConfig();
@@ -113,9 +114,12 @@ async function handleApi(req, res, url) {
   if (url.pathname === '/api/sessions' && req.method === 'GET') {
     const directory = url.searchParams.get('directory') ?? undefined;
     const limit = Number(url.searchParams.get('limit')) || 200;
-    const sessions = store.listSessions({ directory, limit }).map((s) => ({
+    const archived = url.searchParams.get('archived') === '1';
+    const sessions = store.listSessions({ directory, limit, archived }).map((s) => ({
       ...s,
       running: runningJobForSession(s.id) != null,
+      archived: store.isSessionArchived(s.id),
+      archivedAt: archive.archivedAt(s.id),
     }));
     return send(200, { sessions });
   }
@@ -124,7 +128,26 @@ async function handleApi(req, res, url) {
   if (messagesMatch && req.method === 'GET') {
     const session = store.getSession(messagesMatch[1]);
     if (!session) return send(404, { error: '会话不存在' });
-    return send(200, { session, running: runningJobForSession(session.id) != null, messages: store.getMessages(session.id) });
+    const withArchive = {
+      ...session,
+      archived: store.isSessionArchived(session.id),
+      archivedAt: archive.archivedAt(session.id),
+    };
+    return send(200, { session: withArchive, running: runningJobForSession(session.id) != null, messages: store.getMessages(session.id) });
+  }
+
+  const archiveMatch = url.pathname.match(/^\/api\/sessions\/(sess_[\w-]+)\/archive$/);
+  if (archiveMatch && req.method === 'POST') {
+    const body = await readBody(req);
+    const id = archiveMatch[1];
+    if (!store.getSession(id)) return send(404, { error: '会话不存在' });
+    if (body.archived === false && !archive.isArchived(id) && store.isSessionArchived(id)) {
+      // 只有桌面归档、没有手机侧记录：无法代桌面取消
+      return send(409, { error: '该会话是在电脑端 ZCode 中归档的，请在电脑端取消归档' });
+    }
+    archive.setArchived(id, body.archived !== false);
+    broadcast({ type: 'session_updated', sessionId: id });
+    return send(200, { ok: true, archived: store.isSessionArchived(id) });
   }
 
   const stopMatch = url.pathname.match(/^\/api\/sessions\/(sess_[\w-]+)\/stop$/);
