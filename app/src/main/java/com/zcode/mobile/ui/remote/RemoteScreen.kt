@@ -1,11 +1,13 @@
 package com.zcode.mobile.ui.remote
 
-import android.annotation.SuppressLint
+import android.content.Intent
+import android.net.Uri
 import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,13 +19,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Language
-import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -41,12 +44,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import com.zcode.mobile.ui.appContainer
-import com.zcode.mobile.ui.common.LoadingBox
 import kotlinx.coroutines.launch
 
 /**
- * 官方网页端（zcode.z.ai 远程控制）：WebView 全屏加载电脑端生成的远程链接。
- * 走智谱云端中继，可在任何网络下获得字符级流式的完整桌面镜像。
+ * 官方网页端（zcode.z.ai 远程控制）。
+ * 链接来自电脑端 ZCode「远程控制」，含配对凭证且有有效期——过期后在电脑端重新生成即可。
+ * 优先用系统浏览器打开（带完整登录态和引擎）；应用内 WebView 作为备选（部分认证流程可能受限）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -62,6 +65,7 @@ fun RemoteScreen(onBack: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var loadingPage by remember { mutableStateOf(false) }
     var webView by remember { mutableStateOf<WebView?>(null) }
+    var useWebView by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         savedUrl = container.settings.remoteUrlOnce()
@@ -70,7 +74,7 @@ fun RemoteScreen(onBack: () -> Unit) {
         editing = savedUrl.isNullOrBlank()
     }
 
-    fun saveAndOpen() {
+    fun saveAndOpen(openBrowser: Boolean) {
         val u = draft.trim()
         if (!u.startsWith("http")) {
             error = "链接格式不对，应以 https:// 开头"
@@ -80,11 +84,18 @@ fun RemoteScreen(onBack: () -> Unit) {
         scope.launch { container.settings.saveRemoteUrl(u) }
         savedUrl = u
         editing = false
+        if (openBrowser) {
+            context.startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse(u)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        } else {
+            useWebView = true
+        }
     }
 
-    BackHandler(enabled = savedUrl != null && !editing) {
+    BackHandler(enabled = useWebView) {
         val wv = webView
-        if (wv?.canGoBack() == true) wv.goBack() else onBack()
+        if (wv?.canGoBack() == true) wv.goBack() else useWebView = false
     }
 
     Scaffold(
@@ -107,7 +118,7 @@ fun RemoteScreen(onBack: () -> Unit) {
         },
     ) { padding ->
         when {
-            !loaded -> LoadingBox()
+            !loaded -> Column(Modifier.fillMaxSize().padding(padding)) {}
 
             editing || savedUrl == null -> Column(
                 Modifier
@@ -140,21 +151,32 @@ fun RemoteScreen(onBack: () -> Unit) {
                 }
                 Spacer(Modifier.height(12.dp))
                 Button(
-                    onClick = { saveAndOpen() },
+                    onClick = { saveAndOpen(openBrowser = true) },
                     enabled = draft.isNotBlank(),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("保存并打开")
+                    Icon(Icons.Filled.OpenInBrowser, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("保存并在浏览器中打开")
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { saveAndOpen(openBrowser = false) },
+                    enabled = draft.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("保存并在应用内打开（实验）")
                 }
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    "安全提示：该链接等同于电脑控制权，请勿分享给他人。",
+                    "安全提示：该链接等同于电脑控制权，请勿分享给他人。" +
+                        "链接有有效期，打不开或黑屏时请在电脑端重新生成。",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
 
-            else -> Column(Modifier.fillMaxSize().padding(padding)) {
+            useWebView -> Column(Modifier.fillMaxSize().padding(padding)) {
                 if (loadingPage) {
                     LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
                 }
@@ -177,6 +199,51 @@ fun RemoteScreen(onBack: () -> Unit) {
                         }
                     },
                     onRelease = { it.destroy() },
+                )
+            }
+
+            else -> Column(
+                Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Icon(Icons.Filled.Language, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(44.dp))
+                Spacer(Modifier.height(10.dp))
+                Text("链接已保存", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    savedUrl ?: "",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 3,
+                )
+                Spacer(Modifier.height(16.dp))
+                Button(
+                    onClick = {
+                        savedUrl?.let { u ->
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse(u)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Filled.OpenInBrowser, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("在浏览器中打开")
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(onClick = { useWebView = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text("在应用内打开（实验）")
+                }
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "打不开或黑屏：链接可能已过期，请在电脑端重新生成并更换；" +
+                        "或改用「应用内打开」。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
