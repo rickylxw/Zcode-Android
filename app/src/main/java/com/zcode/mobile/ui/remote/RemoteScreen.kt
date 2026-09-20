@@ -2,7 +2,10 @@ package com.zcode.mobile.ui.remote
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Message
 import android.webkit.CookieManager
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
@@ -151,21 +154,21 @@ fun RemoteScreen(onBack: () -> Unit) {
                 }
                 Spacer(Modifier.height(12.dp))
                 Button(
+                    onClick = { saveAndOpen(openBrowser = false) },
+                    enabled = draft.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("保存并在应用内打开")
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
                     onClick = { saveAndOpen(openBrowser = true) },
                     enabled = draft.isNotBlank(),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Icon(Icons.Filled.OpenInBrowser, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text("保存并在浏览器中打开")
-                }
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = { saveAndOpen(openBrowser = false) },
-                    enabled = draft.isNotBlank(),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("保存并在应用内打开（实验）")
+                    Text("在系统浏览器中打开（备用）")
                 }
                 Spacer(Modifier.height(10.dp))
                 Text(
@@ -186,13 +189,46 @@ fun RemoteScreen(onBack: () -> Unit) {
                         WebView(ctx).apply {
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
+                            settings.mediaPlaybackRequiresUserGesture = false
+                            // 去掉 UA 里的 WebView 标识，避免站点按内嵌浏览器降级或拒绝
+                            settings.userAgentString =
+                                settings.userAgentString?.replace("; wv", "")
+                            // 登录/配对流程会用 window.open 新开窗口：默认会被静默丢弃导致黑屏，
+                            // 这里拦截并让新窗口内容继续在当前 WebView 打开
+                            settings.setSupportMultipleWindows(true)
+                            CookieManager.getInstance().setAcceptCookie(true)
                             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                             webViewClient = object : WebViewClient() {
+                                override fun shouldOverrideUrlLoading(
+                                    view: WebView,
+                                    request: WebResourceRequest,
+                                ): Boolean = false // 全部在应用内打开（含 OAuth 跳转）
+
                                 override fun onPageFinished(view: WebView?, u: String?) {
                                     loadingPage = false
                                 }
                                 override fun doUpdateVisitedHistory(view: WebView?, u: String?, isReload: Boolean) {
                                     loadingPage = true
+                                }
+                            }
+                            webChromeClient = object : WebChromeClient() {
+                                override fun onCreateWindow(
+                                    view: WebView,
+                                    isDialog: Boolean,
+                                    isUserGesture: Boolean,
+                                    resultMsg: android.os.Message,
+                                ): Boolean {
+                                    // 新窗口重定向到主 WebView
+                                    val temp = WebView(view.context)
+                                    temp.webViewClient = object : WebViewClient() {
+                                        override fun shouldOverrideUrlLoading(v: WebView, url: String): Boolean {
+                                            view.loadUrl(url)
+                                            return true
+                                        }
+                                    }
+                                    (resultMsg.obj as? WebView.WebViewTransport)?.webView = temp
+                                    resultMsg.sendToTarget()
+                                    return true
                                 }
                             }
                             loadUrl(savedUrl!!)
@@ -221,6 +257,13 @@ fun RemoteScreen(onBack: () -> Unit) {
                 )
                 Spacer(Modifier.height(16.dp))
                 Button(
+                    onClick = { useWebView = true },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("在应用内打开")
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
                     onClick = {
                         savedUrl?.let { u ->
                             context.startActivity(
@@ -232,11 +275,7 @@ fun RemoteScreen(onBack: () -> Unit) {
                 ) {
                     Icon(Icons.Filled.OpenInBrowser, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text("在浏览器中打开")
-                }
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(onClick = { useWebView = true }, modifier = Modifier.fillMaxWidth()) {
-                    Text("在应用内打开（实验）")
+                    Text("在系统浏览器中打开（备用）")
                 }
                 Spacer(Modifier.height(10.dp))
                 Text(
