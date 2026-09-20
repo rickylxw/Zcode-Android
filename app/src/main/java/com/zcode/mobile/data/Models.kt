@@ -27,12 +27,13 @@ data class SessionDto(
     val queuedCount: Int = 0,
 )
 
-/** 桌面端排队中、尚未发送的用户指令 */
+/** 待发送指令：source='phone' 可在手机管理；source='desktop' 来自电脑端（只读） */
 @Serializable
 data class QueuedInputDto(
     val id: String = "",
     val kind: String = "sendText",
     val text: String = "",
+    val source: String = "desktop",
 )
 
 @Serializable

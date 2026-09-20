@@ -4,13 +4,14 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { ensureCliConfig, lanAddresses, loadBridgeConfig, paths } from './config.js';
 import * as archive from './archive.js';
+import * as bqueue from './bqueue.js';
 import { initialRunningSet, LogTail } from './logtail.js';
 import { listModels } from './selection.js';
 import * as store from './store.js';
 import { getJob, pendingNewJobs, runTurn, runningJobForSession, stopJob } from './zcode.js';
 
 const bridgeRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const BRIDGE_VERSION = '0.2.3';
+const BRIDGE_VERSION = '0.2.4';
 
 const cfg = loadBridgeConfig(bridgeRoot);
 const bootInfo = ensureCliConfig();
@@ -22,6 +23,58 @@ const bootInfo = ensureCliConfig();
 const RUNNING_IDLE_MS = 8 * 60 * 1000;
 const runningSessions = new Map(); // sessionId -> 最后一次相关日志事件的时间戳
 for (const sid of initialRunningSet()) runningSessions.set(sid, Date.now());
+
+function mergedQueue(sessionId) {
+  const phone = bqueue.list(sessionId).map((x) => ({ id: x.id, source: 'phone', text: x.text, timeCreated: x.ts }));
+  const desktop = store.queuedInputs(sessionId).map((x) => ({ ...x, source: 'desktop' }));
+  return [...phone, ...desktop];
+}
+
+/** 手机队列自动投递：会话空闲时逐条用无头 --resume 真正发送 */
+const delivering = new Set();
+
+async function tryDeliverQueued() {
+  const entries = Object.entries(bqueue.allQueued()).filter(([, items]) => items.length > 0);
+  if (entries.length) console.log('[queue-deliver] 扫描：', entries.map(([sid, items]) => sid.slice(5, 13) + '×' + items.length).join(', '));
+  for (const [sid, items] of entries) {
+    if (delivering.has(sid)) continue;
+    if (runningSessions.has(sid) || runningJobForSession(sid)) {
+      console.log('[queue-deliver] 跳过运行中会话:', sid.slice(5, 13));
+      continue;
+    }
+    const session = store.getSession(sid);
+    if (!session) {
+      bqueue.clear(sid);
+      continue;
+    }
+    const item = items[0];
+    delivering.add(sid);
+    bqueue.remove(sid, item.id);
+    broadcast({ type: 'session_updated', sessionId: sid });
+    try {
+      await runTurn({
+        sessionId: sid,
+        directory: session.directory,
+        prompt: item.text,
+        mode: 'yolo',
+        onJob: (job) => {
+          if (job.sessionId) {
+            sessionToJob.set(job.sessionId, job.id);
+            runningSessions.add(job.sessionId);
+          }
+        },
+      });
+    } catch (e) {
+      bqueue.addFront(sid, item.text, item.ts); // 失败放回队首
+      broadcast({ type: 'session_updated', sessionId: sid });
+    } finally {
+      delivering.delete(sid);
+      broadcast({ type: 'session_updated', sessionId: sid });
+      setTimeout(tryDeliverQueued, 2000); // 队列里还有下一条就继续
+    }
+    return; // 一次投递一条
+  }
+}
 
 function isRunning(sessionId) {
   return runningSessions.has(sessionId) || runningJobForSession(sessionId) != null;
@@ -41,6 +94,12 @@ setInterval(() => {
   }
 }, 30_000).unref?.();
 
+// 手机队列投递触发：周期扫描空闲会话的待发送队列
+setInterval(() => {
+  console.log('[queue-deliver] tick');
+  tryDeliverQueued().catch((e) => console.error('[queue-deliver] 错误:', e?.message));
+}, 30_000).unref?.();
+
 // ---------- 进度事件路由 ----------
 // LogTail 事件只有 sessionId。桥接自己发起的「新会话」回合在结果出来前不知道 sess_id，
 // 所以首条未知会话的进度事件到达时，用「目录匹配 + 创建时间晚于 job 启动」反查 SQLite 绑定。
@@ -54,7 +113,10 @@ const logTail = new LogTail(onLogEvent);
 function onLogEvent(sessionId, event) {
   // 运行中集合随日志事件实时维护（任何事件都刷新活跃时间）
   markRunning(sessionId, Date.parse(event.timestamp) || Date.now());
-  if (event.kind === 'turn_completed') runningSessions.delete(sessionId);
+  if (event.kind === 'turn_completed') {
+    runningSessions.delete(sessionId);
+    setTimeout(() => tryDeliverQueued().catch(() => {}), 3000);
+  }
 
   let jobId = sessionToJob.get(sessionId);
   if (!jobId) {
@@ -152,7 +214,7 @@ async function handleApi(req, res, url) {
       running: isRunning(s.id),
       archived: store.isSessionArchived(s.id),
       archivedAt: archive.archivedAt(s.id),
-      queuedCount: queued.get(s.id) ?? 0,
+      queuedCount: (queued.get(s.id) ?? 0) + bqueue.list(s.id).length,
     }));
     return send(200, { sessions });
   }
@@ -169,7 +231,7 @@ async function handleApi(req, res, url) {
     return send(200, {
       session: withArchive,
       running: isRunning(session.id),
-      queued: store.queuedInputs(session.id),
+      queued: mergedQueue(session.id),
       messages: store.getMessages(session.id),
     });
   }
@@ -197,22 +259,24 @@ async function handleApi(req, res, url) {
       switch (body.action) {
         case 'add':
           if (!String(body.text ?? '').trim()) return send(400, { error: '内容不能为空' });
-          store.addQueued(id, String(body.text));
+          bqueue.add(id, String(body.text));
           break;
         case 'remove':
-          store.removeQueued(id, String(body.id));
+          if (String(body.id).startsWith('bq_')) bqueue.remove(id, String(body.id));
+          else store.removeQueued(id, String(body.id));
           break;
         case 'clear':
+          bqueue.clear(id);
           store.clearQueued(id);
           break;
         case 'move':
-          store.moveQueued(id, String(body.id), body.dir === 'up' ? 'up' : 'down');
+          bqueue.move(id, String(body.id), body.dir === 'up' ? 'up' : 'down');
           break;
         default:
           return send(400, { error: '未知 action' });
       }
       broadcast({ type: 'session_updated', sessionId: id });
-      return send(200, { ok: true, queued: store.queuedInputs(id) });
+      return send(200, { ok: true, queued: mergedQueue(id) });
     } catch (e) {
       return send(409, { error: e.message });
     }

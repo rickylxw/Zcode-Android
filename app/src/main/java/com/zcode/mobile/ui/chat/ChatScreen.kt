@@ -272,30 +272,39 @@ private fun QueuedCard(
             Spacer(Modifier.height(4.dp))
             if (queued.isEmpty()) {
                 Text(
-                    "队列为空。在电脑端任务运行期间在这里追加指令，会自动排队等待发送。",
+                    "队列为空。电脑端任务运行期间在这里追加指令，会自动排队并在任务结束后发送。",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(4.dp))
             }
             queued.forEachIndexed { idx, q ->
+                val fromDesktop = q.source == "desktop"
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Text(
-                        "${idx + 1}. ${q.text.replace('\n', ' ').take(60)}${if (q.text.length > 60) "…" else ""}",
+                        "${idx + 1}. ${if (fromDesktop) "[电脑] " else ""}${q.text.replace('\n', ' ').take(55)}${if (q.text.length > 55) "…" else ""}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
-                    IconButton(onClick = { if (idx > 0) onMove(q.id, true) }, modifier = Modifier.size(28.dp)) {
-                        Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "上移", modifier = Modifier.size(16.dp))
-                    }
-                    IconButton(onClick = { if (idx < queued.size - 1) onMove(q.id, false) }, modifier = Modifier.size(28.dp)) {
-                        Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "下移", modifier = Modifier.size(16.dp))
-                    }
-                    IconButton(onClick = { onRemove(q.id) }, modifier = Modifier.size(28.dp)) {
-                        Icon(Icons.Filled.Close, contentDescription = "删除", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
+                    if (!fromDesktop) {
+                        IconButton(onClick = { if (idx > 0) onMove(q.id, true) }, modifier = Modifier.size(28.dp)) {
+                            Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "上移", modifier = Modifier.size(16.dp))
+                        }
+                        IconButton(onClick = { if (idx < queued.size - 1) onMove(q.id, false) }, modifier = Modifier.size(28.dp)) {
+                            Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "下移", modifier = Modifier.size(16.dp))
+                        }
+                        IconButton(onClick = { onRemove(q.id) }, modifier = Modifier.size(28.dp)) {
+                            Icon(Icons.Filled.Close, contentDescription = "删除", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
+                        }
+                    } else {
+                        Text(
+                            "电脑端排队",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }
