@@ -164,8 +164,21 @@ private fun UsageCell(title: String, b: com.zcode.mobile.data.UsageBucket, modif
             com.zcode.mobile.ui.common.fmtTokens(b.totalTokens),
             style = MaterialTheme.typography.titleMedium,
         )
+        // 口径：input = 缓存命中 + 缓存写入 + 非缓存输入
+        val hit = b.cacheReadTokens
+        val miss = maxOf(0L, b.inputTokens - b.cacheReadTokens - b.cacheWriteTokens)
         Text(
-            "↑${com.zcode.mobile.ui.common.fmtTokens(b.inputTokens)} ↓${com.zcode.mobile.ui.common.fmtTokens(b.outputTokens)} · ${b.turns}回合",
+            "命中 ${com.zcode.mobile.ui.common.fmtTokens(hit)}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            "非缓存 ${com.zcode.mobile.ui.common.fmtTokens(miss)}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            "输出 ${com.zcode.mobile.ui.common.fmtTokens(b.outputTokens)} · ${b.turns}回合",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

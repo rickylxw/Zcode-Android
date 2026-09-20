@@ -193,7 +193,12 @@ class ChatViewModel(
             is BridgeSocket.Event.TurnResult -> if (ev.requestId == pendingRequestId) {
                 pendingRequestId = null
                 val usageText = buildString {
-                    ev.inputTokens?.let { append("↑${com.zcode.mobile.ui.common.fmtTokens(it)}") }
+                    ev.inputTokens?.let {
+                        append("↑${com.zcode.mobile.ui.common.fmtTokens(it)}")
+                        ev.cacheReadTokens?.takeIf { c -> c > 0 }?.let { c ->
+                            append("(命中${com.zcode.mobile.ui.common.fmtTokens(c)})")
+                        }
+                    }
                     ev.outputTokens?.let { append(if (isEmpty()) "" else "  "); append("↓${com.zcode.mobile.ui.common.fmtTokens(it)}") }
                     ev.totalTokens?.let { append(if (isEmpty()) "" else "  "); append("计 ${com.zcode.mobile.ui.common.fmtTokens(it)} tokens") }
                 }.ifBlank { null }

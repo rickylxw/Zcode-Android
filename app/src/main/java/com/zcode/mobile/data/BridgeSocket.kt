@@ -51,6 +51,7 @@ class BridgeSocket(private val settings: SettingsRepo) {
             val inputTokens: Long? = null,
             val outputTokens: Long? = null,
             val totalTokens: Long? = null,
+            val cacheReadTokens: Long? = null,
         ) : Event
 
         /** 流式文本快照（回合进行中每秒一次，text 为当前已生成的完整正文） */
@@ -203,6 +204,7 @@ class BridgeSocket(private val settings: SettingsRepo) {
                         inputTokens = uLong("inputTokens"),
                         outputTokens = uLong("outputTokens"),
                         totalTokens = uLong("totalTokens"),
+                        cacheReadTokens = uLong("cacheReadTokens"),
                     )
                 )
             }
