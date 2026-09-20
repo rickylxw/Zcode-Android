@@ -10,7 +10,7 @@ import * as store from './store.js';
 import { getJob, pendingNewJobs, runTurn, runningJobForSession, stopJob } from './zcode.js';
 
 const bridgeRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const BRIDGE_VERSION = '0.2.2';
+const BRIDGE_VERSION = '0.2.3';
 
 const cfg = loadBridgeConfig(bridgeRoot);
 const bootInfo = ensureCliConfig();
@@ -294,6 +294,8 @@ function handleWsMessage(ws, raw) {
         if (result.sessionId) {
           sessionToJob.delete(result.sessionId); // 回合结束，路由表防泄漏
           runningSessions.delete(result.sessionId);
+          // 把会话登记进桌面任务索引，让电脑端任务列表能看到手机发起的任务
+          try { store.syncTasksIndex(result.sessionId); } catch {}
         }
         ws.send(
           JSON.stringify({
@@ -371,6 +373,7 @@ setInterval(() => {
 }, 30000).unref?.();
 
 logTail.start();
+try { store.backfillTasksIndex(); } catch {}
 
 server.listen(cfg.port, '0.0.0.0', () => {
   const ips = lanAddresses();

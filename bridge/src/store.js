@@ -234,6 +234,89 @@ function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+/**
+ * 把会话登记进桌面的任务索引（tasks-index.sqlite 的 tasks 表）。
+ * 无头 CLI 创建/续接的会话不会自动进该索引，导致桌面端任务列表里看不到手机发起的任务。
+ * 只补缺失行（INSERT OR IGNORE），绝不修改桌面自己管理的行（置顶/归档/删除等）。
+ */
+export function syncTasksIndex(sessionId) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    let ti = null;
+    try {
+      const s = getSession(sessionId);
+      if (!s) return false;
+      const db = getDb();
+      const firstUser = db
+        .prepare("SELECT data FROM message WHERE session_id = ? AND data LIKE '%\"role\":\"user\"%' ORDER BY rowid LIMIT 1")
+        .get(sessionId);
+      let firstText = '';
+      if (firstUser) {
+        try {
+          firstText = String(JSON.parse(firstUser.data).text ?? '');
+        } catch {}
+      }
+      let model = '';
+      const selRow = db.prepare('SELECT data FROM session_entry WHERE id = ?').get(`${sessionId}:runtime-model-selection`);
+      if (selRow) {
+        try {
+          const sel = JSON.parse(selRow.data).modelSelection ?? {};
+          if (sel.providerId && sel.modelId) model = `${sel.providerId}/${sel.modelId}`;
+        } catch {}
+      }
+      ti = new DatabaseSync(paths.tasksIndex);
+      ti.prepare(
+        `INSERT INTO tasks
+         (workspace_key, workspace_path, workspace_identity, task_id, title, task_status, provider, mode, model,
+          migration_source, forked_from_task_id, created_at, updated_at, unread_at, last_unread_at,
+          pinned, archived, deleted, title_overridden, meta_json, searchable_text, cron_automation_id, off_peak_task_id)
+         VALUES (?, ?, NULL, ?, ?, 'completed', 'glm', 'yolo', ?, NULL, NULL, ?, ?, NULL, 0, 0, 0, 0, 0, ?, ?, NULL, NULL)
+         ON CONFLICT(workspace_key, task_id) DO UPDATE SET
+           title = excluded.title,
+           task_status = 'completed',
+           updated_at = excluded.updated_at,
+           model = excluded.model
+         WHERE tasks.deleted = 0 AND tasks.archived = 0`
+      ).run(
+        s.directory,
+        s.directory,
+        sessionId,
+        s.title || '未命名任务',
+        model,
+        s.timeCreated,
+        Date.now(),
+        JSON.stringify({ taskId: sessionId, title: s.title || '未命名任务' }),
+        (firstText || s.title || '').slice(0, 2000)
+      );
+      ti.close();
+      return true;
+    } catch (e) {
+      ti?.close();
+      if (!/busy|locked/i.test(String(e?.message))) {
+        console.error('syncTasksIndex failed:', e?.message);
+        return false;
+      }
+      sleepSync(300);
+    }
+  }
+  return false;
+}
+
+/** 启动回填：把「不在索引里的近期会话」补进桌面任务索引 */
+export function backfillTasksIndex(limit = 50) {
+  const index = taskIndex();
+  if (index == null) return; // 索引文件不存在（桌面从未在此机器启动）
+  const rows = getDb()
+    .prepare('SELECT id FROM session WHERE parent_id IS NULL ORDER BY time_updated DESC LIMIT ?')
+    .all(limit);
+  let n = 0;
+  for (const r of rows) {
+    if (!index.has(r.id)) {
+      if (syncTasksIndex(r.id)) n++;
+    }
+  }
+  if (n > 0) console.log(`  已把 ${n} 个缺失会话补进桌面任务索引`);
+}
+
 /** 可写句柄（桌面可能持有锁，带重试）；用完必须 close */
 function withWritableDb(fn) {
   for (let attempt = 0; attempt < 6; attempt++) {
