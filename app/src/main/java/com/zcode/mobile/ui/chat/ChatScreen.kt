@@ -79,8 +79,9 @@ fun ChatScreen(sessionId: String, onBack: () -> Unit) {
     var menuExpanded by remember { mutableStateOf(false) }
 
     LaunchedEffect(s.messages.size, s.liveSteps.size, s.streamText) {
-        val total = s.messages.size * 4 + s.liveSteps.size + (if (s.streamText != null) 2 else 0) + 1 // 每条消息可能展开为多项
-        if (total > 1) listState.animateScrollToItem(total - 1)
+        // 滚到列表真实最后一项（估算会越界）
+        val last = listState.layoutInfo.totalItemsCount
+        if (last > 0) listState.animateScrollToItem(last - 1)
     }
     LaunchedEffect(s.notice) {
         s.notice?.let {
@@ -196,15 +197,6 @@ fun ChatScreen(sessionId: String, onBack: () -> Unit) {
                         }
                     }
                 }
-                item(key = "queued") {
-                    QueuedCard(
-                        queued = s.queued,
-                        onMove = { id, up -> vm.queueMove(id, up) },
-                        onRemove = { vm.queueRemove(it) },
-                        onClear = { vm.queueClear() },
-                        onAdd = { vm.queueAdd(it) },
-                    )
-                }
                 if (s.streamText != null) {
                     item(key = "stream") {
                         Column(Modifier.fillMaxWidth()) {
@@ -221,6 +213,15 @@ fun ChatScreen(sessionId: String, onBack: () -> Unit) {
                     item(key = "live") { LiveProgress(steps = s.liveSteps, onStop = { vm.stop() }) }
                 }
             }
+
+            // 待发送队列托盘：固定在输入栏正上方，常驻可见（不随消息滚动）
+            QueuedCard(
+                queued = s.queued,
+                onMove = { id, up -> vm.queueMove(id, up) },
+                onRemove = { vm.queueRemove(it) },
+                onClear = { vm.queueClear() },
+                onAdd = { vm.queueAdd(it) },
+            )
 
             InputBar(
                 enabled = !s.sending,
