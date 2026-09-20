@@ -23,6 +23,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -231,6 +232,7 @@ fun ChatScreen(sessionId: String, onBack: () -> Unit) {
                 onSelectModel = { vm.selectModel(it) },
                 lastUsage = s.lastUsage,
                 onSend = { prompt, mode -> vm.send(prompt, mode) },
+                onQueue = { text -> vm.queueAdd(text) },
                 onStop = { vm.stop() },
             )
         }
@@ -361,6 +363,7 @@ private fun InputBar(
     onSelectModel: (String?) -> Unit,
     lastUsage: String?,
     onSend: (String, String) -> Unit,
+    onQueue: (String) -> Unit,
     onStop: () -> Unit,
 ) {
     var text by remember { mutableStateOf("") }
@@ -429,7 +432,7 @@ private fun InputBar(
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
-                    placeholder = { Text(if (running) "任务执行中…" else "给 ZCode 下发新指令") },
+                    placeholder = { Text(if (running) "任务执行中，发送将排入电脑端队列…" else "给 ZCode 下发新指令") },
                     modifier = Modifier.weight(1f),
                     maxLines = 4,
                     enabled = enabled,
@@ -437,13 +440,21 @@ private fun InputBar(
                 IconButton(
                     onClick = {
                         if (text.isNotBlank()) {
-                            onSend(text.trim(), mode)
+                            if (running) {
+                                // 运行中不打断当前回合：消息进入电脑端待发送队列
+                                onQueue(text.trim())
+                            } else {
+                                onSend(text.trim(), mode)
+                            }
                             text = ""
                         }
                     },
                     enabled = enabled && text.isNotBlank(),
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "发送")
+                    Icon(
+                        if (running) Icons.Filled.PlayArrow else Icons.AutoMirrored.Filled.Send,
+                        contentDescription = if (running) "加入电脑端队列" else "发送",
+                    )
                 }
             }
         }
