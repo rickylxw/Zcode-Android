@@ -99,3 +99,37 @@ function latestLogFile() {
     .sort();
   return files.length ? path.join(paths.logDir, files[files.length - 1]) : null;
 }
+
+/**
+ * 启动时回放当日日志，找出「turn.started 之后还没等到 turn.completed」的会话，
+ * 作为运行中集合的种子——覆盖桥接重启期间桌面端或其他客户端正在跑的回合。
+ * 只看近 12h 的事件，避免把远古崩溃残留当成运行中。
+ */
+export function initialRunningSet() {
+  const running = new Set();
+  const lastSeen = new Map();
+  const now = Date.now();
+  try {
+    const file = latestLogFile();
+    if (!file) return running;
+    for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+      if (!line.trim()) continue;
+      let e;
+      try {
+        e = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (!e.sessionId) continue;
+      if (e.timestamp) lastSeen.set(e.sessionId, Date.parse(e.timestamp) || 0);
+      if (e.event === 'turn.started') running.add(e.sessionId);
+      else if (e.event === 'turn.completed') running.delete(e.sessionId);
+    }
+  } catch {}
+  // 超过 12h 没有任何事件的，视为历史残留，不算运行中
+  for (const sid of running) {
+    const ts = lastSeen.get(sid) ?? 0;
+    if (now - ts > 12 * 3600 * 1000) running.delete(sid);
+  }
+  return running;
+}

@@ -53,6 +53,14 @@ class BridgeSocket(private val settings: SettingsRepo) {
             val totalTokens: Long? = null,
         ) : Event
 
+        /** 流式文本快照（回合进行中每秒一次，text 为当前已生成的完整正文） */
+        data class Stream(
+            val sessionId: String,
+            val jobId: String?,
+            val text: String,
+            val reasoning: String,
+        ) : Event
+
         data class SessionUpdated(val sessionId: String?) : Event
         data class Failure(val requestId: String?, val code: String?, val message: String) : Event
     }
@@ -198,6 +206,15 @@ class BridgeSocket(private val settings: SettingsRepo) {
                     )
                 )
             }
+
+            "stream" -> _events.tryEmit(
+                Event.Stream(
+                    sessionId = str("sessionId") ?: return,
+                    jobId = str("jobId"),
+                    text = (obj["text"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+                    reasoning = (obj["reasoning"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+                )
+            )
 
             "session_updated" -> _events.tryEmit(Event.SessionUpdated(str("sessionId")))
 

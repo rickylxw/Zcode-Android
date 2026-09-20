@@ -176,6 +176,30 @@ function previewInput(input) {
 }
 
 /**
+ * 流式快照：取最新一条助手消息当前已生成的文本（文本块 + 思考块分开）。
+ * 无头 CLI 流式写入 part 表，回合进行中轮询本函数即可得到渐增的文本。
+ */
+export function getStreamingSnapshot(sessionId) {
+  const db = getDb();
+  // role 存在 data JSON 里而不是列上，用 LIKE 粗筛后取最新一条
+  const msg = db
+    .prepare("SELECT id, data FROM message WHERE session_id = ? AND data LIKE '%\"role\":\"assistant\"%' ORDER BY rowid DESC LIMIT 1")
+    .get(sessionId);
+  if (!msg) return { text: '', reasoning: '' };
+  const parts = db.prepare('SELECT data FROM part WHERE message_id = ? ORDER BY rowid').all(msg.id);
+  const text = [];
+  const reasoning = [];
+  for (const p of parts) {
+    try {
+      const d = JSON.parse(p.data);
+      if (d.type === 'text' && d.text) text.push(d.text);
+      else if (d.type === 'reasoning' && d.text) reasoning.push(d.text);
+    } catch {}
+  }
+  return { text: text.join('\n\n'), reasoning: reasoning.join('\n\n') };
+}
+
+/**
  * Token 用量汇总（来自 turn_usage 表，status=completed 的回合）。
  * 返回 今日 / 近7天 / 累计 三组：回合数、输入/输出/推理/缓存/总 token、总时长。
  */

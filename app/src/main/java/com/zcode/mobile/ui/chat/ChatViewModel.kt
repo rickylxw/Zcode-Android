@@ -24,6 +24,7 @@ data class ChatUiState(
     val selectedModel: String? = null, // null = 电脑默认
     val lastUsage: String? = null, // 上一回合的 token 用量摘要
     val archivedRequested: Boolean = false, // 归档成功，请求退出当前页面
+    val streamText: String? = null, // 流式输出：回合进行中当前已生成的正文（null = 无流式）
 )
 
 /**
@@ -46,6 +47,15 @@ class ChatViewModel(
         container.socket.subscribe(sessionId)
         viewModelScope.launch {
             container.socket.events.collect { ev -> handleEvent(ev) }
+        }
+        // 断线重连后：服务端按连接记订阅者，需要重新订阅；同时刷新运行状态
+        viewModelScope.launch {
+            container.socket.state.collect { st ->
+                if (st is BridgeSocket.State.Connected) {
+                    container.socket.subscribe(sessionId)
+                    load()
+                }
+            }
         }
     }
 
@@ -140,6 +150,10 @@ class ChatViewModel(
 
     private suspend fun handleEvent(ev: BridgeSocket.Event) {
         when (ev) {
+            is BridgeSocket.Event.Stream -> if (ev.sessionId == sessionId) {
+                _state.value = _state.value.copy(streamText = ev.text.ifBlank { null })
+            }
+
             is BridgeSocket.Event.Progress -> if (ev.sessionId == sessionId) {
                 when (ev.kind) {
                     "turn_started" -> pushStep("任务开始")
@@ -164,6 +178,7 @@ class ChatViewModel(
                     sending = false,
                     running = false,
                     liveSteps = emptyList(),
+                    streamText = null,
                     lastUsage = usageText,
                 )
                 load() // 重新拉取，让工具块/思考块完整呈现

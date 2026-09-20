@@ -73,8 +73,8 @@ fun ChatScreen(sessionId: String, onBack: () -> Unit) {
     val listState = rememberLazyListState()
     var menuExpanded by remember { mutableStateOf(false) }
 
-    LaunchedEffect(s.messages.size, s.liveSteps.size) {
-        val total = s.messages.size * 4 + s.liveSteps.size + 1 // 每条消息可能展开为多项
+    LaunchedEffect(s.messages.size, s.liveSteps.size, s.streamText) {
+        val total = s.messages.size * 4 + s.liveSteps.size + (if (s.streamText != null) 2 else 0) + 1 // 每条消息可能展开为多项
         if (total > 1) listState.animateScrollToItem(total - 1)
     }
     LaunchedEffect(s.notice) {
@@ -188,6 +188,18 @@ fun ChatScreen(sessionId: String, onBack: () -> Unit) {
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+                if (s.streamText != null) {
+                    item(key = "stream") {
+                        Column(Modifier.fillMaxWidth()) {
+                            AssistantText(s.streamText ?: "")
+                            Text(
+                                "▍",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
                         }
                     }
                 }

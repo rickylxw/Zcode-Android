@@ -4,16 +4,42 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { ensureCliConfig, lanAddresses, loadBridgeConfig, paths } from './config.js';
 import * as archive from './archive.js';
-import { LogTail } from './logtail.js';
+import { initialRunningSet, LogTail } from './logtail.js';
 import { listModels } from './selection.js';
 import * as store from './store.js';
 import { getJob, pendingNewJobs, runTurn, runningJobForSession, stopJob } from './zcode.js';
 
 const bridgeRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const BRIDGE_VERSION = '0.2.1';
+const BRIDGE_VERSION = '0.2.2';
 
 const cfg = loadBridgeConfig(bridgeRoot);
 const bootInfo = ensureCliConfig();
+
+// ---------- 运行中判定（真源：ZCode 运行日志的 turn 事件） ----------
+// 覆盖任意端发起的回合（桌面/手机/其他客户端），桥接重启时从当日日志回放种子。
+// 被强杀的回合没有 turn.completed 事件 → 记录可能卡住，
+// 因此记录最后活动时间，由 reaper 定期回收空闲超 8 分钟的条目。
+const RUNNING_IDLE_MS = 8 * 60 * 1000;
+const runningSessions = new Map(); // sessionId -> 最后一次相关日志事件的时间戳
+for (const sid of initialRunningSet()) runningSessions.set(sid, Date.now());
+
+function isRunning(sessionId) {
+  return runningSessions.has(sessionId) || runningJobForSession(sessionId) != null;
+}
+
+function markRunning(sessionId, ts = Date.now()) {
+  runningSessions.set(sessionId, ts);
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [sid, ts] of runningSessions) {
+    if (now - ts > RUNNING_IDLE_MS) {
+      runningSessions.delete(sid);
+      broadcast({ type: 'session_updated', sessionId: sid }); // 让手机刷新掉「运行中」
+    }
+  }
+}, 30_000).unref?.();
 
 // ---------- 进度事件路由 ----------
 // LogTail 事件只有 sessionId。桥接自己发起的「新会话」回合在结果出来前不知道 sess_id，
@@ -21,10 +47,15 @@ const bootInfo = ensureCliConfig();
 const jobSubscribers = new Map(); // jobId -> Set<ws>
 const sessionSubscribers = new Map(); // sessionId -> Set<ws>
 const sessionToJob = new Map(); // sessionId -> jobId（绑定后的路由表）
+const streamPumps = new Map(); // jobId -> 轮询定时器（泵自检 job 存活性，结束自动清除）
 
 const logTail = new LogTail(onLogEvent);
 
 function onLogEvent(sessionId, event) {
+  // 运行中集合随日志事件实时维护（任何事件都刷新活跃时间）
+  markRunning(sessionId, Date.parse(event.timestamp) || Date.now());
+  if (event.kind === 'turn_completed') runningSessions.delete(sessionId);
+
   let jobId = sessionToJob.get(sessionId);
   if (!jobId) {
     for (const job of pendingNewJobs()) {
@@ -117,7 +148,7 @@ async function handleApi(req, res, url) {
     const archived = url.searchParams.get('archived') === '1';
     const sessions = store.listSessions({ directory, limit, archived }).map((s) => ({
       ...s,
-      running: runningJobForSession(s.id) != null,
+      running: isRunning(s.id),
       archived: store.isSessionArchived(s.id),
       archivedAt: archive.archivedAt(s.id),
     }));
@@ -133,7 +164,7 @@ async function handleApi(req, res, url) {
       archived: store.isSessionArchived(session.id),
       archivedAt: archive.archivedAt(session.id),
     };
-    return send(200, { session: withArchive, running: runningJobForSession(session.id) != null, messages: store.getMessages(session.id) });
+    return send(200, { session: withArchive, running: isRunning(session.id), messages: store.getMessages(session.id) });
   }
 
   const archiveMatch = url.pathname.match(/^\/api\/sessions\/(sess_[\w-]+)\/archive$/);
@@ -187,15 +218,46 @@ function handleWsMessage(ws, raw) {
       mode,
       model: typeof model === 'string' && model ? model : null,
       onJob: (job) => {
-        if (job.sessionId) sessionToJob.set(job.sessionId, job.id);
+        if (job.sessionId) {
+          sessionToJob.set(job.sessionId, job.id);
+          markRunning(job.sessionId);
+        }
         // 发起者自动订阅该回合的进度；jobId 同时下发给手机端，支持随时 stop_job
         if (!jobSubscribers.has(job.id)) jobSubscribers.set(job.id, new Set());
         jobSubscribers.get(job.id).add(ws);
         ws.send(JSON.stringify({ type: 'prompt_accepted', requestId, jobId: job.id }));
+
+        // 流式泵：回合进行中每秒取最新助手消息已生成的文本，快照推给订阅者。
+        // 无头 CLI 没有输出流，但文本实时写入 SQLite part 表，快照即渐增的正文。
+        const pump = setInterval(() => {
+          const j = getJob(job.id);
+          if (!j) {
+            clearInterval(pump);
+            streamPumps.delete(job.id);
+            return;
+          }
+          const sid = j.sessionId ?? sessionId;
+          if (!sid) return; // 新会话尚未绑定 sess_id
+          let snap;
+          try {
+            snap = store.getStreamingSnapshot(sid);
+          } catch {
+            return;
+          }
+          for (const w of jobSubscribers.get(job.id) ?? []) {
+            if (w.readyState === w.OPEN) {
+              w.send(JSON.stringify({ type: 'stream', sessionId: sid, jobId: job.id, text: snap.text, reasoning: snap.reasoning }));
+            }
+          }
+        }, 1000);
+        streamPumps.set(job.id, pump);
       },
     })
       .then((result) => {
-        if (result.sessionId) sessionToJob.delete(result.sessionId); // 回合结束，路由表防泄漏
+        if (result.sessionId) {
+          sessionToJob.delete(result.sessionId); // 回合结束，路由表防泄漏
+          runningSessions.delete(result.sessionId);
+        }
         ws.send(
           JSON.stringify({
             type: 'result',
@@ -209,6 +271,7 @@ function handleWsMessage(ws, raw) {
         broadcast({ type: 'session_updated', sessionId: result.sessionId });
       })
       .catch((err) => {
+        if (sessionId) runningSessions.delete(sessionId);
         ws.send(JSON.stringify({ type: 'error', requestId, code: err.code, message: err.message }));
       });
     return;
