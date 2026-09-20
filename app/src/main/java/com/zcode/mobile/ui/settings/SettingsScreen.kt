@@ -1,5 +1,6 @@
 package com.zcode.mobile.ui.settings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,7 +20,10 @@ import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -42,6 +46,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.zcode.mobile.data.MirrorLatency
+import com.zcode.mobile.data.MirrorLatencyTester
+import com.zcode.mobile.data.Mirrors
 import com.zcode.mobile.data.UpdateException
 import com.zcode.mobile.data.UpdateChecker
 import com.zcode.mobile.ui.appContainer
@@ -70,6 +77,135 @@ private sealed interface UpdateUi {
     data class Failed(val msg: String) : UpdateUi
 }
 
+private fun latencyLabel(l: MirrorLatency?): String = when {
+    l == null -> ""
+    l.probing -> "测速中…"
+    l.ms == null -> "不可用"
+    l.ms < 1000 -> "${l.ms} ms"
+    else -> "${"%.1f".format(l.ms / 1000.0)} s"
+}
+
+private fun latencyColor(ms: Long?): androidx.compose.ui.graphics.Color? = when {
+    ms == null -> null
+    ms < 500 -> androidx.compose.ui.graphics.Color(0xFF2E7D32) // 绿
+    ms < 1500 -> androidx.compose.ui.graphics.Color(0xF2, 0x9A, 0x00) // 琥珀
+    else -> androidx.compose.ui.graphics.Color(0xC6, 0x28, 0x28) // 红
+}
+
+/**
+ * 下载加速前缀选择器：常用镜像下拉（带实时延迟）+「自定义…」手输。
+ * value 为空字符串表示直连。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MirrorPicker(
+    value: String,
+    enabled: Boolean,
+    latencies: Map<String, MirrorLatency>,
+    onPick: (String) -> Unit,
+) {
+    val known = Mirrors.findByPrefix(value) != null
+    var expanded by remember { mutableStateOf(false) }
+    var customMode by remember(value, known) { mutableStateOf(!known) } // 值不属于内置镜像时进入自定义态
+
+    Column {
+        ExposedDropdownMenuBox(
+            expanded = expanded && !customMode,
+            onExpandedChange = { if (!customMode) expanded = it },
+        ) {
+            val selectedName = if (customMode) "自定义" else Mirrors.findByPrefix(value)?.name ?: "直连（不加速）"
+            val selectedLatency = latencies[value]
+            OutlinedTextField(
+                value = selectedName,
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("下载加速镜像") },
+                supportingText = { Text("选延迟最低的下载最快；「直连」不走镜像") },
+                trailingIcon = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (!customMode) {
+                            val l = selectedLatency
+                            if (l != null) {
+                                val text = latencyLabel(l)
+                                val color = if (l.probing) MaterialTheme.colorScheme.onSurfaceVariant else latencyColor(l.ms)
+                                    ?: MaterialTheme.colorScheme.error
+                                Text(
+                                    text,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = color,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                            }
+                        }
+                        ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded && !customMode)
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .menuAnchor(),
+                enabled = enabled,
+            )
+            ExposedDropdownMenu(expanded = expanded && !customMode, onDismissRequest = { expanded = false }) {
+                Mirrors.all.forEach { m ->
+                    val l = latencies[m.prefix]
+                    DropdownMenuItem(
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(m.name, modifier = Modifier.weight(1f))
+                                val text = latencyLabel(l)
+                                if (text.isNotEmpty()) {
+                                    val color = if (l?.probing == true) MaterialTheme.colorScheme.onSurfaceVariant
+                                    else latencyColor(l?.ms) ?: MaterialTheme.colorScheme.error
+                                    Text(text, style = MaterialTheme.typography.labelMedium, color = color)
+                                }
+                            }
+                        },
+                        onClick = {
+                            expanded = false
+                            onPick(m.prefix)
+                        },
+                    )
+                }
+                DropdownMenuItem(
+                    text = { Text("自定义…") },
+                    onClick = {
+                        expanded = false
+                        customMode = true
+                    },
+                )
+            }
+        }
+
+        if (customMode) {
+            OutlinedTextField(
+                value = value,
+                onValueChange = onPick,
+                label = { Text("自定义加速前缀") },
+                placeholder = { Text("如 https://mirror.ghproxy.com/，留空直连") },
+                supportingText = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("会拼在 APK 下载地址前")
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            "改用镜像列表",
+                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier
+                                .clickable(enabled = enabled) {
+                                    customMode = false
+                                    onPick(Mirrors.all.first().prefix)
+                                },
+                        )
+                    }
+                },
+                singleLine = true,
+                enabled = enabled,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+}
+
 /** 设置页：更新源配置 + 检查更新/下载/安装；连接配置入口 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -84,6 +220,10 @@ fun SettingsScreen(onBack: () -> Unit, onOpenConnect: () -> Unit) {
     var loaded by remember { mutableStateOf(false) }
 
     var ui by remember { mutableStateOf<UpdateUi>(UpdateUi.Idle) }
+
+    // 镜像延迟探测：进入页面即测，结果全局缓存
+    val latencyTester = remember { MirrorLatencyTester() }
+    LaunchedEffect(Unit) { latencyTester.probeAll() }
 
     // 载入已保存的更新源配置（未保存过时用内置默认仓库）
     LaunchedEffect(Unit) {
@@ -185,15 +325,14 @@ fun SettingsScreen(onBack: () -> Unit, onOpenConnect: () -> Unit) {
                 enabled = loaded,
                 modifier = Modifier.fillMaxWidth(),
             )
-            OutlinedTextField(
+            MirrorPicker(
                 value = proxy,
-                onValueChange = { proxy = it },
-                label = { Text("下载加速前缀（可选）") },
-                placeholder = { Text("如 https://mirror.ghproxy.com/，留空直连") },
-                supportingText = { Text("国内访问 GitHub 下载慢时填写加速镜像，会拼在 APK 下载地址前") },
-                singleLine = true,
                 enabled = loaded,
-                modifier = Modifier.fillMaxWidth(),
+                latencies = latencyTester.latencies.collectAsState().value,
+                onPick = { picked ->
+                    proxy = picked
+                    saveConfig()
+                },
             )
 
             Row(verticalAlignment = Alignment.CenterVertically) {
