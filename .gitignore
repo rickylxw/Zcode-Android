@@ -20,3 +20,4 @@ app/release.jks
 probe/
 .capture/
 .tools/
+bridge/server.log
