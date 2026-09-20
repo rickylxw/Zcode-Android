@@ -46,7 +46,7 @@ inline fun <reified VM : androidx.lifecycle.ViewModel> appViewModel(
 }
 
 @Composable
-fun AppNav(autoServer: String? = null, autoToken: String? = null) {
+fun AppNav(autoServer: String? = null, autoToken: String? = null, autoRemote: String? = null) {
     val nav = rememberNavController()
     val container = appContainer()
     // DataStore 首次读取前无法判断是否已有配置，先等首个真实值再决定起点
@@ -54,7 +54,11 @@ fun AppNav(autoServer: String? = null, autoToken: String? = null) {
 
     if (connectionState === LOADING) return
 
-    val start = if (connectionState != null) Routes.SESSIONS else Routes.CONNECT
+    val start = when {
+        autoRemote != null -> Routes.REMOTE
+        connectionState != null -> Routes.SESSIONS
+        else -> Routes.CONNECT
+    }
 
     NavHost(navController = nav, startDestination = start) {
         composable(Routes.CONNECT) {
@@ -82,7 +86,7 @@ fun AppNav(autoServer: String? = null, autoToken: String? = null) {
             )
         }
         composable(Routes.REMOTE) {
-            RemoteScreen(onBack = { nav.popBackStack() })
+            RemoteScreen(autoUrl = autoRemote, onBack = { nav.popBackStack() })
         }
         composable(Routes.CHAT) { entry ->
             val sessionId = entry.arguments?.getString("sessionId") ?: return@composable

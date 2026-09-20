@@ -1,6 +1,7 @@
 package com.zcode.mobile.ui.remote
 
 import android.content.Intent
+import android.view.View
 import android.net.Uri
 import android.os.Message
 import android.webkit.CookieManager
@@ -46,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
+import com.zcode.mobile.BuildConfig
 import com.zcode.mobile.ui.appContainer
 import kotlinx.coroutines.launch
 
@@ -56,7 +58,7 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RemoteScreen(onBack: () -> Unit) {
+fun RemoteScreen(autoUrl: String? = null, onBack: () -> Unit) {
     val container = appContainer()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -72,9 +74,10 @@ fun RemoteScreen(onBack: () -> Unit) {
 
     LaunchedEffect(Unit) {
         savedUrl = container.settings.remoteUrlOnce()
-        draft = savedUrl.orEmpty()
+        draft = autoUrl ?: savedUrl.orEmpty()
         loaded = true
         editing = savedUrl.isNullOrBlank()
+        if (!autoUrl.isNullOrBlank()) container.settings.saveRemoteUrl(autoUrl) // 自动化测试：直接保存
     }
 
     fun saveAndOpen(openBrowser: Boolean) {
@@ -187,6 +190,9 @@ fun RemoteScreen(onBack: () -> Unit) {
                     modifier = Modifier.fillMaxSize(),
                     factory = { ctx ->
                         WebView(ctx).apply {
+                            if (BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true)
+                            // 模拟器/部分 GPU 驱动下硬件加速的 WebView 会整块渲染成黑屏，改用软件层
+                            setLayerType(View.LAYER_TYPE_SOFTWARE, null)
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
                             settings.mediaPlaybackRequiresUserGesture = false

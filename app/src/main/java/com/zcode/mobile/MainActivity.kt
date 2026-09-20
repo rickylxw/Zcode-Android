@@ -14,9 +14,10 @@ class MainActivity : ComponentActivity() {
         // 便于自动化/调试：adb shell am start 传 --es server --es token 可自动连接
         val autoServer = intent?.getStringExtra("server")
         val autoToken = intent?.getStringExtra("token")
+        val autoRemote = intent?.getStringExtra("remote")
         setContent {
             ZcodeTheme {
-                AppNav(autoServer = autoServer, autoToken = autoToken)
+                AppNav(autoServer = autoServer, autoToken = autoToken, autoRemote = autoRemote)
             }
         }
     }
