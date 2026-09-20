@@ -13,6 +13,7 @@ import com.zcode.mobile.ZcodeApp
 import com.zcode.mobile.ui.chat.ChatScreen
 import com.zcode.mobile.ui.connect.ConnectScreen
 import com.zcode.mobile.ui.newtask.NewTaskScreen
+import com.zcode.mobile.ui.remote.RemoteScreen
 import com.zcode.mobile.ui.sessions.SessionsScreen
 import com.zcode.mobile.ui.settings.SettingsScreen
 
@@ -22,6 +23,7 @@ object Routes {
     const val CHAT = "chat/{sessionId}"
     const val NEW_TASK = "newtask"
     const val SETTINGS = "settings"
+    const val REMOTE = "remote"
 
     fun chat(sessionId: String) = "chat/$sessionId"
 }
@@ -69,13 +71,18 @@ fun AppNav(autoServer: String? = null, autoToken: String? = null) {
                 onOpenSession = { nav.navigate(Routes.chat(it)) },
                 onNewTask = { nav.navigate(Routes.NEW_TASK) },
                 onOpenSettings = { nav.navigate(Routes.SETTINGS) },
+                onOpenRemote = { nav.navigate(Routes.REMOTE) },
             )
         }
         composable(Routes.SETTINGS) {
             SettingsScreen(
                 onBack = { nav.popBackStack() },
                 onOpenConnect = { nav.navigate(Routes.CONNECT) },
+                onOpenRemote = { nav.navigate(Routes.REMOTE) },
             )
+        }
+        composable(Routes.REMOTE) {
+            RemoteScreen(onBack = { nav.popBackStack() })
         }
         composable(Routes.CHAT) { entry ->
             val sessionId = entry.arguments?.getString("sessionId") ?: return@composable

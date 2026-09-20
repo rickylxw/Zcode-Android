@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material3.AssistChip
@@ -134,6 +135,7 @@ fun SessionsScreen(
     onOpenSession: (String) -> Unit,
     onNewTask: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenRemote: () -> Unit,
 ) {
     val vm = appViewModel { SessionsViewModel(it) }
     val s by vm.state.collectAsState()
@@ -152,6 +154,9 @@ fun SessionsScreen(
                             if (s.showArchived) Icons.Filled.Unarchive else Icons.Filled.Archive,
                             contentDescription = if (s.showArchived) "返回会话列表" else "查看归档",
                         )
+                    }
+                    IconButton(onClick = onOpenRemote) {
+                        Icon(Icons.Filled.Language, contentDescription = "官方网页端")
                     }
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = "设置")

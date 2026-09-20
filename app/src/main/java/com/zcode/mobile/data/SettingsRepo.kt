@@ -76,6 +76,21 @@ class SettingsRepo(private val context: Context) {
         }
     }
 
+    // ---- 官方网页端（远程控制）----
+
+    private val keyRemoteUrl = stringPreferencesKey("official_remote_url")
+
+    /** 电脑端 ZCode「远程控制」生成的网页端链接；null = 未配置 */
+    val remoteUrl: Flow<String?> = context.dataStore.data.map { p -> p[keyRemoteUrl]?.takeIf { it.isNotBlank() } }
+
+    suspend fun remoteUrlOnce(): String? = remoteUrl.first()
+
+    suspend fun saveRemoteUrl(url: String?) {
+        context.dataStore.edit { p ->
+            if (url.isNullOrBlank()) p.remove(keyRemoteUrl) else p[keyRemoteUrl] = url.trim()
+        }
+    }
+
     suspend fun clear() {
         context.dataStore.edit { it.clear() }
     }

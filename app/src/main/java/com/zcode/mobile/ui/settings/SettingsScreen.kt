@@ -309,7 +309,7 @@ private fun MirrorPicker(
 /** 设置页：更新源配置 + 检查更新/下载/安装；连接配置入口 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onOpenConnect: () -> Unit) {
+fun SettingsScreen(onBack: () -> Unit, onOpenConnect: () -> Unit, onOpenRemote: () -> Unit = {}) {
     val container = appContainer()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -411,6 +411,27 @@ fun SettingsScreen(onBack: () -> Unit, onOpenConnect: () -> Unit) {
                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("连接配置", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
                     Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
+                }
+            }
+
+            // 官方网页端（远程控制）入口
+            Surface(
+                onClick = onOpenRemote,
+                shape = MaterialTheme.shapes.medium,
+                tonalElevation = 1.dp,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("官方网页端（远程控制）", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
+                    }
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        "通过智谱云端中继的完整桌面镜像，任何网络可用（含字符级流式）",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
 
