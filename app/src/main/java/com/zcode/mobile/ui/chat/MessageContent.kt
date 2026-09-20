@@ -38,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -47,6 +48,7 @@ import com.zcode.mobile.data.BlockDto
 /**
  * 助手消息渲染：按 ``` 代码围栏切分——代码块用自带复制按钮的深底样式，
  * 其余（标题/加粗/列表/链接/行内代码/表格等）交给 Markdown 库渲染。
+ * 所有文本均包在 SelectionContainer 里：长按可选词复制。
  */
 @Composable
 fun AssistantText(text: String) {
@@ -56,7 +58,9 @@ fun AssistantText(text: String) {
             if (seg.isCode) {
                 CodeBlock(seg.content.trim('\n'), seg.lang)
             } else if (seg.content.isNotBlank()) {
-                Markdown(seg.content.trim('\n'))
+                SelectionContainer {
+                    Markdown(seg.content.trim('\n'))
+                }
             }
         }
     }
@@ -120,15 +124,17 @@ fun CodeBlock(code: String, lang: String? = null) {
                     )
                 }
             }
-            Text(
-                code,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
-                fontFamily = FontFamily.Monospace,
-                style = MaterialTheme.typography.bodySmall,
-            )
+            SelectionContainer {
+                Text(
+                    code,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
         }
     }
 }
@@ -174,11 +180,13 @@ fun ReasoningBlock(text: String) {
                 }
             }
             if (expanded) {
-                Text(
-                    text.trim('\n'),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                SelectionContainer {
+                    Text(
+                        text.trim('\n'),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }

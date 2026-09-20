@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -141,11 +142,13 @@ fun ChatScreen(sessionId: String, onBack: () -> Unit) {
                                     shape = RoundedCornerShape(14.dp),
                                     modifier = Modifier.widthIn(max = 320.dp),
                                 ) {
-                                    Text(
-                                        m.blocks.filter { it.type == "text" }.joinToString("\n") { it.text.orEmpty() },
-                                        modifier = Modifier.padding(12.dp),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                    )
+                                    SelectionContainer {
+                                        Text(
+                                            m.blocks.filter { it.type == "text" }.joinToString("\n") { it.text.orEmpty() },
+                                            modifier = Modifier.padding(12.dp),
+                                            style = MaterialTheme.typography.bodyMedium,
+                                        )
+                                    }
                                 }
                             }
                         }
