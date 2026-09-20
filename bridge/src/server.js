@@ -146,11 +146,13 @@ async function handleApi(req, res, url) {
     const directory = url.searchParams.get('directory') ?? undefined;
     const limit = Number(url.searchParams.get('limit')) || 200;
     const archived = url.searchParams.get('archived') === '1';
+    const queued = store.queuedCounts();
     const sessions = store.listSessions({ directory, limit, archived }).map((s) => ({
       ...s,
       running: isRunning(s.id),
       archived: store.isSessionArchived(s.id),
       archivedAt: archive.archivedAt(s.id),
+      queuedCount: queued.get(s.id) ?? 0,
     }));
     return send(200, { sessions });
   }
@@ -164,7 +166,12 @@ async function handleApi(req, res, url) {
       archived: store.isSessionArchived(session.id),
       archivedAt: archive.archivedAt(session.id),
     };
-    return send(200, { session: withArchive, running: isRunning(session.id), messages: store.getMessages(session.id) });
+    return send(200, {
+      session: withArchive,
+      running: isRunning(session.id),
+      queued: store.queuedInputs(session.id),
+      messages: store.getMessages(session.id),
+    });
   }
 
   const archiveMatch = url.pathname.match(/^\/api\/sessions\/(sess_[\w-]+)\/archive$/);

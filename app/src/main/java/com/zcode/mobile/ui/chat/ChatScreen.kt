@@ -191,6 +191,33 @@ fun ChatScreen(sessionId: String, onBack: () -> Unit) {
                         }
                     }
                 }
+                if (s.queued.isNotEmpty()) {
+                    item(key = "queued") {
+                        Surface(
+                            color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(Modifier.padding(10.dp)) {
+                                Text(
+                                    "⏳ 电脑端待发送队列（${s.queued.size}）",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                s.queued.forEach { q ->
+                                    Text(
+                                        "· ${q.text.replace('\n', ' ').take(80)}${if (q.text.length > 80) "…" else ""}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
                 if (s.streamText != null) {
                     item(key = "stream") {
                         Column(Modifier.fillMaxWidth()) {

@@ -25,6 +25,7 @@ data class ChatUiState(
     val lastUsage: String? = null, // 上一回合的 token 用量摘要
     val archivedRequested: Boolean = false, // 归档成功，请求退出当前页面
     val streamText: String? = null, // 流式输出：回合进行中当前已生成的正文（null = 无流式）
+    val queued: List<com.zcode.mobile.data.QueuedInputDto> = emptyList(), // 电脑端待发送队列
 )
 
 /**
@@ -110,6 +111,7 @@ class ChatViewModel(
                     session = detail.session,
                     messages = detail.messages,
                     running = detail.running,
+                    queued = detail.queued,
                 )
             } catch (e: Exception) {
                 _state.value = _state.value.copy(loading = false, error = e.message ?: "加载失败")

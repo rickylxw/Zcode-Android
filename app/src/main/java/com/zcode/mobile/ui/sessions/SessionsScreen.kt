@@ -255,6 +255,9 @@ private fun SessionCard(session: SessionDto, modifier: Modifier = Modifier, onCl
                 if (session.running) {
                     Spacer(Modifier.width(8.dp))
                     AssistChip(onClick = onClick, label = { Text("运行中") })
+                } else if (session.queuedCount > 0) {
+                    Spacer(Modifier.width(8.dp))
+                    AssistChip(onClick = onClick, label = { Text("待发 ${session.queuedCount}") })
                 }
             }
             Spacer(Modifier.height(4.dp))

@@ -200,6 +200,35 @@ export function getStreamingSnapshot(sessionId) {
 }
 
 /**
+ * 会话的待发送输入：桌面端已排队、尚未发给模型的用户指令（delivery='queue'）。
+ * backgroundNotification 是系统通知不入列表。
+ */
+export function queuedInputs(sessionId) {
+  const rows = getDb()
+    .prepare(
+      "SELECT id, kind, payload FROM session_input WHERE session_id = ? AND delivery = 'queue' AND kind != 'backgroundNotification' ORDER BY admitted_sequence"
+    )
+    .all(sessionId);
+  return rows.map((r) => {
+    let text = '';
+    try {
+      text = String(JSON.parse(r.payload).text ?? '');
+    } catch {}
+    return { id: r.id, kind: r.kind, text: text.slice(0, 500) };
+  });
+}
+
+/** 各会话的待发送数量（供会话列表角标），Map<sessionId, count> */
+export function queuedCounts() {
+  const rows = getDb()
+    .prepare(
+      "SELECT session_id, COUNT(*) AS c FROM session_input WHERE delivery = 'queue' AND kind != 'backgroundNotification' GROUP BY session_id"
+    )
+    .all();
+  return new Map(rows.map((r) => [r.session_id, r.c]));
+}
+
+/**
  * Token 用量汇总（来自 turn_usage 表，status=completed 的回合）。
  * 返回 今日 / 近7天 / 累计 三组：回合数、输入/输出/推理/缓存/总 token、总时长。
  */

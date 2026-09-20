@@ -24,6 +24,15 @@ data class SessionDto(
     val running: Boolean = false,
     val archived: Boolean = false,
     val archivedAt: Long? = null,
+    val queuedCount: Int = 0,
+)
+
+/** 桌面端排队中、尚未发送的用户指令 */
+@Serializable
+data class QueuedInputDto(
+    val id: String = "",
+    val kind: String = "sendText",
+    val text: String = "",
 )
 
 @Serializable
@@ -47,6 +56,7 @@ data class MessageDto(
 data class SessionDetailDto(
     val session: SessionDto,
     val running: Boolean = false,
+    val queued: List<QueuedInputDto> = emptyList(),
     val messages: List<MessageDto> = emptyList(),
 )
 
