@@ -24,3 +24,6 @@ bridge/server.log
 bridge/archive.json
 .streamtest/
 bridge/queue-dump.txt
+bridge/chain-dump.txt
+bridge/idx-dump.txt
+bridge/task-row.txt
