@@ -22,3 +22,4 @@ probe/
 .tools/
 bridge/server.log
 bridge/archive.json
+.streamtest/
