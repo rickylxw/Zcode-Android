@@ -28,3 +28,4 @@ bridge/chain-dump.txt
 bridge/idx-dump.txt
 bridge/task-row.txt
 bridge/qd.txt
+.webtest/
