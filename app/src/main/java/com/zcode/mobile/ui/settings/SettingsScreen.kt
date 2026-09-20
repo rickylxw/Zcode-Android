@@ -92,6 +92,93 @@ private fun latencyColor(ms: Long?): androidx.compose.ui.graphics.Color? = when 
     else -> androidx.compose.ui.graphics.Color(0xC6, 0x28, 0x28) // 红
 }
 
+private data class UsageUi(
+    val loading: Boolean = true,
+    val resp: com.zcode.mobile.data.UsageResp? = null,
+    val error: String? = null,
+)
+
+/** Token 用量面板：今日 / 近7天 / 累计 + 近7天逐日明细 */
+@Composable
+private fun UsagePanel(container: com.zcode.mobile.AppContainer) {
+    var ui by remember { mutableStateOf(UsageUi()) }
+
+    LaunchedEffect(Unit) {
+        try {
+            ui = UsageUi(false, container.api.usage())
+        } catch (e: Exception) {
+            ui = UsageUi(false, error = e.message ?: "读取用量失败")
+        }
+    }
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp)) {
+            Text("Token 用量", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(6.dp))
+            when {
+                ui.loading -> Text("读取中…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                ui.error != null -> Text(ui.error ?: "", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                else -> {
+                    val resp = ui.resp ?: return@Column
+                    val s = resp.summary
+                    Row(Modifier.fillMaxWidth()) {
+                        UsageCell("今日", s.today, Modifier.weight(1f))
+                        UsageCell("近 7 天", s.last7Days, Modifier.weight(1f))
+                        UsageCell("累计", s.allTime, Modifier.weight(1f))
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    // 近 7 天逐日总量（最大值归一化的细条）
+                    val daily = resp.daily
+                    val maxDay = daily.maxOfOrNull { it.totalTokens } ?: 0L
+                    daily.forEach { d ->
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp)) {
+                            Text(
+                                d.date.slice(5..9),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.width(44.dp),
+                            )
+                            LinearProgressIndicator(
+                                progress = { if (maxDay > 0) (d.totalTokens.toFloat() / maxDay) else 0f },
+                                modifier = Modifier.weight(1f).height(6.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "${d.turns}回 · ${com.zcode.mobile.ui.common.fmtTokens(d.totalTokens)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UsageCell(title: String, b: com.zcode.mobile.data.UsageBucket, modifier: Modifier = Modifier) {
+    Column(modifier) {
+        Text(title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            com.zcode.mobile.ui.common.fmtTokens(b.totalTokens),
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Text(
+            "↑${com.zcode.mobile.ui.common.fmtTokens(b.inputTokens)} ↓${com.zcode.mobile.ui.common.fmtTokens(b.outputTokens)} · ${b.turns}回合",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (b.durationMs > 0) {
+            Text(
+                com.zcode.mobile.ui.common.fmtDuration(b.durationMs),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
 /**
  * 下载加速前缀选择器：常用镜像下拉（带实时延迟）+「自定义…」手输。
  * value 为空字符串表示直连。
@@ -315,6 +402,9 @@ fun SettingsScreen(onBack: () -> Unit, onOpenConnect: () -> Unit) {
             }
 
             Text("版本与更新", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+
+            UsagePanel(container = container)
+
             OutlinedTextField(
                 value = repo,
                 onValueChange = { repo = it },

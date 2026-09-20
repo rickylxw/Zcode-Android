@@ -41,6 +41,10 @@ class SettingsRepo(private val context: Context) {
     private val keyUpdateProxy = stringPreferencesKey("update_proxy")
     private val keyLastUpdateCheck = stringPreferencesKey("last_update_check")
 
+    // ---- 模型选择（跨页面记住上次选择）----
+
+    private val keyModel = stringPreferencesKey("selected_model")
+
     val updateConfig: Flow<UpdateConfig> = context.dataStore.data.map { p ->
         // 从未保存过时用内置默认仓库；显式保存空字符串则视为清空
         UpdateConfig(p[keyUpdateRepo] ?: UpdateChecker.DEFAULT_REPO, p[keyUpdateProxy].orEmpty())
@@ -59,6 +63,17 @@ class SettingsRepo(private val context: Context) {
 
     suspend fun setLastUpdateCheck(ts: Long) {
         context.dataStore.edit { it[keyLastUpdateCheck] = ts.toString() }
+    }
+
+    /** 上次选择的模型；null = 跟随电脑端默认 */
+    val selectedModel: Flow<String?> = context.dataStore.data.map { p -> p[keyModel]?.takeIf { it.isNotBlank() } }
+
+    suspend fun selectedModelOnce(): String? = selectedModel.first()
+
+    suspend fun saveSelectedModel(model: String?) {
+        context.dataStore.edit { p ->
+            if (model.isNullOrBlank()) p.remove(keyModel) else p[keyModel] = model
+        }
     }
 
     suspend fun clear() {

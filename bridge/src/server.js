@@ -4,11 +4,12 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { ensureCliConfig, lanAddresses, loadBridgeConfig, paths } from './config.js';
 import { LogTail } from './logtail.js';
+import { listModels } from './selection.js';
 import * as store from './store.js';
 import { getJob, pendingNewJobs, runTurn, runningJobForSession, stopJob } from './zcode.js';
 
 const bridgeRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const BRIDGE_VERSION = '0.1.3';
+const BRIDGE_VERSION = '0.2.0';
 
 const cfg = loadBridgeConfig(bridgeRoot);
 const bootInfo = ensureCliConfig();
@@ -99,6 +100,16 @@ async function handleApi(req, res, url) {
     return send(200, { projects: store.listProjects() });
   }
 
+  if (url.pathname === '/api/models' && req.method === 'GET') {
+    const models = listModels();
+    if (!models) return send(500, { error: '无法确定可用的模型（provider 配置缺失）' });
+    return send(200, models); // { provider, models: [id, ...] }
+  }
+
+  if (url.pathname === '/api/usage' && req.method === 'GET') {
+    return send(200, { summary: store.usageSummary(), daily: store.usageDaily(7) });
+  }
+
   if (url.pathname === '/api/sessions' && req.method === 'GET') {
     const directory = url.searchParams.get('directory') ?? undefined;
     const limit = Number(url.searchParams.get('limit')) || 200;
@@ -142,7 +153,7 @@ function handleWsMessage(ws, raw) {
   }
 
   if (msg.type === 'prompt') {
-    const { requestId, sessionId = null, directory, prompt, mode } = msg;
+    const { requestId, sessionId = null, directory, prompt, mode, model } = msg;
     if (!directory || !prompt) {
       return ws.send(JSON.stringify({ type: 'error', requestId, message: '缺少 directory 或 prompt' }));
     }
@@ -151,6 +162,7 @@ function handleWsMessage(ws, raw) {
       directory,
       prompt,
       mode,
+      model: typeof model === 'string' && model ? model : null,
       onJob: (job) => {
         if (job.sessionId) sessionToJob.set(job.sessionId, job.id);
         // 发起者自动订阅该回合的进度；jobId 同时下发给手机端，支持随时 stop_job

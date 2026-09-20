@@ -51,6 +51,16 @@ class BridgeApi(private val settings: SettingsRepo) {
         request<StopResp>(url, token, "POST", "/api/sessions/$id/stop", "{}")
     }
 
+    suspend fun models(): ModelListDto {
+        val (url, token) = requireConfig()
+        return request(url, token, "GET", "/api/models", null)
+    }
+
+    suspend fun usage(): UsageResp {
+        val (url, token) = requireConfig()
+        return request(url, token, "GET", "/api/usage", null)
+    }
+
     private suspend fun requireConfig(): Pair<String, String> {
         val c = settings.current() ?: throw BridgeException("尚未配置桥接连接")
         return c.serverUrl to c.token

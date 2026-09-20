@@ -16,6 +16,8 @@ data class NewTaskUiState(
     val selectedDir: String? = null,
     val customDir: String = "",
     val mode: String = "yolo",
+    val models: List<String> = emptyList(),
+    val selectedModel: String? = null,
     val prompt: String = "",
     val submitting: Boolean = false,
     val createdSessionId: String? = null,
@@ -33,6 +35,7 @@ class NewTaskViewModel(private val container: AppContainer) : ViewModel() {
 
     init {
         container.socket.ensureConnected()
+        loadModels()
         viewModelScope.launch {
             try {
                 val projects = container.api.projects()
@@ -44,6 +47,26 @@ class NewTaskViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             container.socket.events.collect { ev -> handleEvent(ev) }
         }
+    }
+
+    private fun loadModels() {
+        viewModelScope.launch {
+            try {
+                val list = container.api.models()
+                val saved = container.settings.selectedModelOnce()
+                _state.value = _state.value.copy(
+                    models = list.models,
+                    selectedModel = saved?.takeIf { it in list.models },
+                )
+            } catch (e: Exception) {
+                // 无模型列表时隐藏选择器，用电脑默认
+            }
+        }
+    }
+
+    fun selectModel(model: String?) {
+        _state.value = _state.value.copy(selectedModel = model)
+        viewModelScope.launch { container.settings.saveSelectedModel(model) }
     }
 
     fun consumeNotice() {
@@ -73,7 +96,7 @@ class NewTaskViewModel(private val container: AppContainer) : ViewModel() {
         val requestId = UUID.randomUUID().toString()
         pendingRequestId = requestId
         _state.value = s.copy(submitting = true, notice = null)
-        container.socket.sendPrompt(requestId, sessionId = null, directory = dir, prompt = s.prompt.trim(), mode = s.mode)
+        container.socket.sendPrompt(requestId, sessionId = null, directory = dir, prompt = s.prompt.trim(), mode = s.mode, model = s.selectedModel)
     }
 
     private fun handleEvent(ev: BridgeSocket.Event) {

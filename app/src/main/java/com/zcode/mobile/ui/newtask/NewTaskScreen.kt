@@ -160,6 +160,25 @@ fun NewTaskScreen(onBack: () -> Unit, onCreated: (String) -> Unit) {
                         modifier = Modifier.fillMaxWidth(),
                     )
 
+                    Text("模型", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 16.dp, bottom = 4.dp))
+                    if (s.models.isNotEmpty()) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            s.models.forEach { m ->
+                                androidx.compose.material3.FilterChip(
+                                    selected = s.selectedModel == m,
+                                    onClick = { vm.selectModel(if (s.selectedModel == m) null else m) },
+                                    label = { Text(m) },
+                                )
+                            }
+                        }
+                        Text(
+                            if (s.selectedModel == null) "使用电脑端默认模型" else "本任务使用 ${s.selectedModel}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
+                    }
+
                     Text("权限模式", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 16.dp, bottom = 4.dp))
                     var menu by remember { mutableStateOf(false) }
                     androidx.compose.material3.OutlinedButton(onClick = { menu = true }) {

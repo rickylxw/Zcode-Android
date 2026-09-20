@@ -20,6 +20,9 @@ data class ChatUiState(
     val sending: Boolean = false,
     val error: String? = null,
     val notice: String? = null,
+    val models: List<String> = emptyList(),
+    val selectedModel: String? = null, // null = 电脑默认
+    val lastUsage: String? = null, // 上一回合的 token 用量摘要
 )
 
 /**
@@ -37,6 +40,7 @@ class ChatViewModel(
 
     init {
         load()
+        loadModels()
         container.socket.ensureConnected()
         container.socket.subscribe(sessionId)
         viewModelScope.launch {
@@ -46,6 +50,26 @@ class ChatViewModel(
 
     fun consumeNotice() {
         _state.value = _state.value.copy(notice = null)
+    }
+
+    private fun loadModels() {
+        viewModelScope.launch {
+            try {
+                val list = container.api.models()
+                val saved = container.settings.selectedModelOnce()
+                _state.value = _state.value.copy(
+                    models = list.models,
+                    selectedModel = saved?.takeIf { it in list.models },
+                )
+            } catch (e: Exception) {
+                // 模型列表拿不到时保持空（选择器隐藏），不影响其他功能
+            }
+        }
+    }
+
+    fun selectModel(model: String?) {
+        _state.value = _state.value.copy(selectedModel = model)
+        viewModelScope.launch { container.settings.saveSelectedModel(model) }
     }
 
     fun load() {
@@ -82,7 +106,7 @@ class ChatViewModel(
             messages = _state.value.messages + optimistic,
             liveSteps = listOf("已下发指令，等待电脑执行…"),
         )
-        container.socket.sendPrompt(requestId, sessionId, session.directory, prompt, mode)
+        container.socket.sendPrompt(requestId, sessionId, session.directory, prompt, mode, _state.value.selectedModel)
     }
 
     fun stop() {
@@ -113,7 +137,17 @@ class ChatViewModel(
 
             is BridgeSocket.Event.TurnResult -> if (ev.requestId == pendingRequestId) {
                 pendingRequestId = null
-                _state.value = _state.value.copy(sending = false, running = false, liveSteps = emptyList())
+                val usageText = buildString {
+                    ev.inputTokens?.let { append("↑${com.zcode.mobile.ui.common.fmtTokens(it)}") }
+                    ev.outputTokens?.let { append(if (isEmpty()) "" else "  "); append("↓${com.zcode.mobile.ui.common.fmtTokens(it)}") }
+                    ev.totalTokens?.let { append(if (isEmpty()) "" else "  "); append("计 ${com.zcode.mobile.ui.common.fmtTokens(it)} tokens") }
+                }.ifBlank { null }
+                _state.value = _state.value.copy(
+                    sending = false,
+                    running = false,
+                    liveSteps = emptyList(),
+                    lastUsage = usageText,
+                )
                 load() // 重新拉取，让工具块/思考块完整呈现
             }
 

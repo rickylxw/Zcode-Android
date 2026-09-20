@@ -174,6 +174,10 @@ fun ChatScreen(sessionId: String, onBack: () -> Unit) {
             InputBar(
                 enabled = !s.sending,
                 running = s.running,
+                models = s.models,
+                selectedModel = s.selectedModel,
+                onSelectModel = { vm.selectModel(it) },
+                lastUsage = s.lastUsage,
                 onSend = { prompt, mode -> vm.send(prompt, mode) },
                 onStop = { vm.stop() },
             )
@@ -213,54 +217,98 @@ private fun LiveProgress(steps: List<String>, onStop: () -> Unit) {
 }
 
 @Composable
-private fun InputBar(enabled: Boolean, running: Boolean, onSend: (String, String) -> Unit, onStop: () -> Unit) {
+private fun InputBar(
+    enabled: Boolean,
+    running: Boolean,
+    models: List<String>,
+    selectedModel: String?,
+    onSelectModel: (String?) -> Unit,
+    lastUsage: String?,
+    onSend: (String, String) -> Unit,
+    onStop: () -> Unit,
+) {
     var text by remember { mutableStateOf("") }
     var mode by remember { mutableStateOf("yolo") }
     var modeMenu by remember { mutableStateOf(false) }
+    var modelMenu by remember { mutableStateOf(false) }
 
     Surface(tonalElevation = 3.dp) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.Bottom,
-        ) {
-            if (running) {
-                IconButton(onClick = onStop) {
-                    Icon(Icons.Filled.Stop, contentDescription = "停止任务", tint = MaterialTheme.colorScheme.error)
-                }
-            } else {
-                Box {
-                    AssistChip(onClick = { modeMenu = true }, label = { Text(modeLabel(mode)) })
-                    DropdownMenu(expanded = modeMenu, onDismissRequest = { modeMenu = false }) {
-                        MODES.forEach { m ->
-                            DropdownMenuItem(
-                                text = { Text("${modeLabel(m)} ($m)") },
-                                onClick = {
-                                    mode = m
-                                    modeMenu = false
-                                },
-                            )
+        Column {
+            lastUsage?.let {
+                Text(
+                    "上一回合：$it",
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 2.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                if (running) {
+                    IconButton(onClick = onStop) {
+                        Icon(Icons.Filled.Stop, contentDescription = "停止任务", tint = MaterialTheme.colorScheme.error)
+                    }
+                } else {
+                    Box {
+                        AssistChip(onClick = { modeMenu = true }, label = { Text(modeLabel(mode)) })
+                        DropdownMenu(expanded = modeMenu, onDismissRequest = { modeMenu = false }) {
+                            MODES.forEach { m ->
+                                DropdownMenuItem(
+                                    text = { Text("${modeLabel(m)} ($m)") },
+                                    onClick = {
+                                        mode = m
+                                        modeMenu = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    if (models.isNotEmpty()) {
+                        Spacer(Modifier.width(6.dp))
+                        Box {
+                            AssistChip(onClick = { modelMenu = true }, label = { Text(selectedModel ?: "默认模型") })
+                            DropdownMenu(expanded = modelMenu, onDismissRequest = { modelMenu = false }) {
+                                DropdownMenuItem(
+                                    text = { Text("默认（跟随电脑端）") },
+                                    onClick = {
+                                        onSelectModel(null)
+                                        modelMenu = false
+                                    },
+                                )
+                                models.forEach { m ->
+                                    DropdownMenuItem(
+                                        text = { Text(m) },
+                                        onClick = {
+                                            onSelectModel(m)
+                                            modelMenu = false
+                                        },
+                                    )
+                                }
+                            }
                         }
                     }
                 }
-            }
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                placeholder = { Text(if (running) "任务执行中…" else "给 ZCode 下发新指令") },
-                modifier = Modifier.weight(1f),
-                maxLines = 4,
-                enabled = enabled,
-            )
-            IconButton(
-                onClick = {
-                    if (text.isNotBlank()) {
-                        onSend(text.trim(), mode)
-                        text = ""
-                    }
-                },
-                enabled = enabled && text.isNotBlank(),
-            ) {
-                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "发送")
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    placeholder = { Text(if (running) "任务执行中…" else "给 ZCode 下发新指令") },
+                    modifier = Modifier.weight(1f),
+                    maxLines = 4,
+                    enabled = enabled,
+                )
+                IconButton(
+                    onClick = {
+                        if (text.isNotBlank()) {
+                            onSend(text.trim(), mode)
+                            text = ""
+                        }
+                    },
+                    enabled = enabled && text.isNotBlank(),
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "发送")
+                }
             }
         }
     }

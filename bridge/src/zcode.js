@@ -2,7 +2,7 @@ import { spawn, execFile } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { paths } from './config.js';
-import { ensureResumableSelection } from './selection.js';
+import { applyModelSelection, ensureResumableSelection, setDefaultModel } from './selection.js';
 
 const DEFAULT_MODE = 'yolo'; // 无头模式下 CLI 默认即 yolo；手机端可选 plan/build/edit
 const TURN_TIMEOUT_MS = 30 * 60 * 1000;
@@ -57,8 +57,10 @@ export function stopJob(jobId) {
 /**
  * 执行一个无头回合，resolve 出 { sessionId, response, usage, projection }。
  * onJob(job) 在 spawn 后同步回调，调用方可立即拿到 jobId（用于发送 prompt_accepted、支持随时停止）。
+ * model：用户指定的模型（如 GLM-5.3）。CLI 无 --model 参数，
+ * 续接时改写会话的模型选择记录，新会话时改写 config.json 默认模型。
  */
-export function runTurn({ sessionId = null, directory, prompt, mode = DEFAULT_MODE, onJob }) {
+export function runTurn({ sessionId = null, directory, prompt, mode = DEFAULT_MODE, model = null, onJob }) {
   return new Promise((resolve, reject) => {
     if (!VALID_MODES.has(mode)) return reject(new Error(`无效的权限模式: ${mode}（可选 build/edit/plan/yolo）`));
     if (!prompt || !prompt.trim()) return reject(new Error('prompt 不能为空'));
@@ -69,8 +71,13 @@ export function runTurn({ sessionId = null, directory, prompt, mode = DEFAULT_MO
       return reject(Object.assign(new Error('该会话正在执行中，请等待完成或先停止'), { code: 'BUSY' }));
     }
 
-    // 会话的模型选择指向已失效的 provider 实例时（桌面端换过实例），先自愈再续接
-    if (sessionId) ensureResumableSelection(sessionId);
+    // 模型选择：续接改写会话选择记录；新会话改写 CLI 全局默认。失败不阻塞（用默认模型跑）
+    if (sessionId) {
+      ensureResumableSelection(sessionId);
+      if (model) applyModelSelection(sessionId, model);
+    } else if (model) {
+      setDefaultModel(model);
+    }
 
     const args = [
       paths.zcodeCjs,

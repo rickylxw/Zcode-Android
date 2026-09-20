@@ -28,6 +28,7 @@ export const paths = {
   v2Config: path.join(zcodeHome, 'v2', 'config.json'),
   v2ProviderConfig: path.join(zcodeHome, 'v2', 'provider_config.json'),
   tasksIndex: path.join(zcodeHome, 'v2', 'tasks-index.sqlite'),
+  builtinCatalog: path.join(path.parse(resolveZcodeCjs()).root, 'Program Files', 'ZCode', 'resources', 'config', 'provider', 'zcode-builtin.json'),
   db: path.join(zcodeHome, 'cli', 'db', 'db.sqlite'),
   logDir: path.join(zcodeHome, 'cli', 'log'),
 };

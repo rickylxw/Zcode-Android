@@ -57,6 +57,40 @@ data class ProjectsResp(val projects: List<ProjectDto> = emptyList())
 @Serializable
 data class SessionsResp(val sessions: List<SessionDto> = emptyList())
 
+@Serializable
+data class ModelListDto(val provider: String = "", val models: List<String> = emptyList())
+
+@Serializable
+data class UsageBucket(
+    val turns: Int = 0,
+    val inputTokens: Long = 0,
+    val outputTokens: Long = 0,
+    val reasoningTokens: Long = 0,
+    val cacheReadTokens: Long = 0,
+    val cacheWriteTokens: Long = 0,
+    val totalTokens: Long = 0,
+    val durationMs: Long = 0,
+)
+
+@Serializable
+data class UsageDay(
+    val date: String = "",
+    val turns: Int = 0,
+    val inputTokens: Long = 0,
+    val outputTokens: Long = 0,
+    val totalTokens: Long = 0,
+)
+
+@Serializable
+data class UsageResp(val summary: UsageSummaryDto = UsageSummaryDto(), val daily: List<UsageDay> = emptyList())
+
+@Serializable
+data class UsageSummaryDto(
+    val today: UsageBucket = UsageBucket(),
+    val last7Days: UsageBucket = UsageBucket(),
+    val allTime: UsageBucket = UsageBucket(),
+)
+
 /** 进度事件（来自桥接对 ZCode 运行日志的 tail） */
 data class ProgressEvent(
     val sessionId: String,

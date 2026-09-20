@@ -48,6 +48,9 @@ class BridgeSocket(private val settings: SettingsRepo) {
             val requestId: String,
             val sessionId: String?,
             val response: String,
+            val inputTokens: Long? = null,
+            val outputTokens: Long? = null,
+            val totalTokens: Long? = null,
         ) : Event
 
         data class SessionUpdated(val sessionId: String?) : Event
@@ -129,11 +132,18 @@ class BridgeSocket(private val settings: SettingsRepo) {
         }
     }
 
-    fun sendPrompt(requestId: String, sessionId: String?, directory: String, prompt: String, mode: String) {
-        val msg = buildString {
-            append("""{"type":"prompt","requestId":"${esc(requestId)}",""")
-            if (sessionId != null) append(""""sessionId":"${esc(sessionId)}",""")
-            append(""""directory":"${esc(directory)}","prompt":"${esc(prompt)}","mode":"$mode"}""")
+    fun sendPrompt(requestId: String, sessionId: String?, directory: String, prompt: String, mode: String, model: String? = null) {
+        val obj = mutableMapOf<String, String>(
+            "type" to "prompt",
+            "requestId" to requestId,
+            "directory" to directory,
+            "prompt" to prompt,
+            "mode" to mode,
+        )
+        if (sessionId != null) obj["sessionId"] = sessionId
+        if (!model.isNullOrBlank()) obj["model"] = model
+        val msg = obj.entries.joinToString(",", "{", "}") { (k, v) ->
+            "\"" + esc(k) + "\":\"" + esc(v) + "\""
         }
         ws?.send(msg) ?: scope.launch {
             _events.emit(Event.Failure(requestId, "NO_SOCKET", "未连接到电脑，请先在连接页重试"))
@@ -174,13 +184,20 @@ class BridgeSocket(private val settings: SettingsRepo) {
                 )
             }
 
-            "result" -> _events.tryEmit(
-                Event.TurnResult(
-                    requestId = str("requestId") ?: "",
-                    sessionId = str("sessionId"),
-                    response = (obj["response"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+            "result" -> {
+                val usage = obj["usage"] as? kotlinx.serialization.json.JsonObject
+                fun uLong(k: String) = ((usage?.get(k) as? JsonPrimitive)?.contentOrNull)?.toLongOrNull()
+                _events.tryEmit(
+                    Event.TurnResult(
+                        requestId = str("requestId") ?: "",
+                        sessionId = str("sessionId"),
+                        response = (obj["response"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+                        inputTokens = uLong("inputTokens"),
+                        outputTokens = uLong("outputTokens"),
+                        totalTokens = uLong("totalTokens"),
+                    )
                 )
-            )
+            }
 
             "session_updated" -> _events.tryEmit(Event.SessionUpdated(str("sessionId")))
 

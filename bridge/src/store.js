@@ -164,6 +164,91 @@ function previewInput(input) {
   return s.length > 200 ? s.slice(0, 200) + '…' : s;
 }
 
+/**
+ * Token 用量汇总（来自 turn_usage 表，status=completed 的回合）。
+ * 返回 今日 / 近7天 / 累计 三组：回合数、输入/输出/推理/缓存/总 token、总时长。
+ */
+export function usageSummary() {
+  const dayMs = 24 * 3600 * 1000;
+  const now = Date.now();
+  const localMidnight = new Date(now);
+  localMidnight.setHours(0, 0, 0, 0);
+
+  const agg = (since) => {
+    const row = since == null
+      ? getDb()
+          .prepare(
+            `SELECT COUNT(*) AS turns,
+                    COALESCE(SUM(input_tokens),0) AS inputTokens,
+                    COALESCE(SUM(output_tokens),0) AS outputTokens,
+                    COALESCE(SUM(reasoning_tokens),0) AS reasoningTokens,
+                    COALESCE(SUM(cache_read_input_tokens),0) AS cacheRead,
+                    COALESCE(SUM(cache_creation_input_tokens),0) AS cacheWrite,
+                    COALESCE(SUM(computed_total_tokens),0) AS totalTokens,
+                    COALESCE(SUM(duration_ms),0) AS durationMs
+             FROM turn_usage WHERE status = 'completed'`
+          )
+          .get()
+      : getDb()
+          .prepare(
+            `SELECT COUNT(*) AS turns,
+                    COALESCE(SUM(input_tokens),0) AS inputTokens,
+                    COALESCE(SUM(output_tokens),0) AS outputTokens,
+                    COALESCE(SUM(reasoning_tokens),0) AS reasoningTokens,
+                    COALESCE(SUM(cache_read_input_tokens),0) AS cacheRead,
+                    COALESCE(SUM(cache_creation_input_tokens),0) AS cacheWrite,
+                    COALESCE(SUM(computed_total_tokens),0) AS totalTokens,
+                    COALESCE(SUM(duration_ms),0) AS durationMs
+             FROM turn_usage WHERE status = 'completed' AND started_at >= ?`
+          )
+          .get(since);
+    return {
+      turns: row.turns,
+      inputTokens: row.inputTokens,
+      outputTokens: row.outputTokens,
+      reasoningTokens: row.reasoningTokens,
+      cacheReadTokens: row.cacheRead,
+      cacheWriteTokens: row.cacheWrite,
+      totalTokens: row.totalTokens,
+      durationMs: row.durationMs,
+    };
+  };
+
+  return {
+    today: agg(localMidnight.getTime()),
+    last7Days: agg(now - 7 * dayMs),
+    allTime: agg(null),
+  };
+}
+
+/** 按天分列的近 n 天用量（用于面板柱状/明细） */
+export function usageDaily(days = 7) {
+  const dayMs = 24 * 3600 * 1000;
+  const out = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const dayStart = new Date();
+    dayStart.setHours(0, 0, 0, 0);
+    const start = dayStart.getTime() - i * dayMs;
+    const row = getDb()
+      .prepare(
+        `SELECT COUNT(*) AS turns,
+                COALESCE(SUM(input_tokens),0) AS inputTokens,
+                COALESCE(SUM(output_tokens),0) AS outputTokens,
+                COALESCE(SUM(computed_total_tokens),0) AS totalTokens
+         FROM turn_usage WHERE status = 'completed' AND started_at >= ? AND started_at < ?`
+      )
+      .get(start, start + dayMs);
+    out.push({
+      date: new Date(start).toISOString().slice(0, 10),
+      turns: row.turns,
+      inputTokens: row.inputTokens,
+      outputTokens: row.outputTokens,
+      totalTokens: row.totalTokens,
+    });
+  }
+  return out;
+}
+
 function rowToSession(r) {
   return {
     id: r.id,

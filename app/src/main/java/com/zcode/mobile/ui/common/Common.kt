@@ -22,6 +22,22 @@ fun appVersion(context: Context): String = try {
     "0.0.0"
 }
 
+/** token 数中文单位：>=1亿 → x.xx亿，>=1万 → x.x万，否则原值 */
+fun fmtTokens(n: Long): String = when {
+    n >= 100_000_000 -> String.format(Locale.US, "%.2f亿", n / 100_000_000.0)
+    n >= 10_000 -> String.format(Locale.US, "%.1f万", n / 10_000.0)
+    else -> n.toString()
+}
+
+/** 毫秒时长：1h2m / 3m20s / 45s / 800ms */
+fun fmtDuration(ms: Long): String = when {
+    ms <= 0 -> ""
+    ms >= 3_600_000 -> "${ms / 3_600_000}h${(ms % 3_600_000) / 60_000}m"
+    ms >= 60_000 -> "${ms / 60_000}m${(ms % 60_000) / 1000}s"
+    ms >= 1000 -> "${ms / 1000}s"
+    else -> "${ms}ms"
+}
+
 fun relativeTime(epochMs: Long?): String {
     if (epochMs == null || epochMs <= 0) return ""
     val diff = System.currentTimeMillis() - epochMs
