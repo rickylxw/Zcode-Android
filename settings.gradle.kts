@@ -1,9 +1,15 @@
+// CI（GitHub Actions）直连官方仓库；本地构建优先国内镜像，网络不通时自动回退官方源。
+// 阿里云镜像偶尔滞后（曾缺最新 Compose 工件导致 CI 失败），所以 CI 下完全不经过它。
+val onCi = System.getenv("CI") == "true"
+val aliyun = listOf(
+    "https://maven.aliyun.com/repository/google",
+    "https://maven.aliyun.com/repository/central",
+    "https://maven.aliyun.com/repository/gradle-plugin",
+)
+
 pluginManagement {
     repositories {
-        // 国内镜像优先，网络不通时 Gradle 会自动落到后面的官方源
-        maven("https://maven.aliyun.com/repository/google")
-        maven("https://maven.aliyun.com/repository/central")
-        maven("https://maven.aliyun.com/repository/gradle-plugin")
+        if (!onCi) aliyun.forEach { maven(it) }
         google {
             content {
                 includeGroupByRegex("com\\.android.*")
@@ -19,8 +25,7 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        maven("https://maven.aliyun.com/repository/google")
-        maven("https://maven.aliyun.com/repository/central")
+        if (!onCi) aliyun.forEach { maven(it) }
         google()
         mavenCentral()
     }
