@@ -1,3 +1,0 @@
-user | The TodoWrite tool hasn't been used recently. If you're work
-assistant | 命令阻塞了（GUI 主循环一直占用前台）。改用后台方式启动并确认进程：
-assistant | 启动成功。`pythonw.exe` 进程（PID 30404）已在后台运行，全程无控制台黑框——悬浮条现在应该已经出现
