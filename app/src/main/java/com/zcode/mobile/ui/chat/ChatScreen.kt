@@ -196,16 +196,14 @@ fun ChatScreen(sessionId: String, onBack: () -> Unit) {
                         }
                     }
                 }
-                if (s.queued.isNotEmpty()) {
-                    item(key = "queued") {
-                        QueuedCard(
-                            queued = s.queued,
-                            onMove = { id, up -> vm.queueMove(id, up) },
-                            onRemove = { vm.queueRemove(it) },
-                            onClear = { vm.queueClear() },
-                            onAdd = { vm.queueAdd(it) },
-                        )
-                    }
+                item(key = "queued") {
+                    QueuedCard(
+                        queued = s.queued,
+                        onMove = { id, up -> vm.queueMove(id, up) },
+                        onRemove = { vm.queueRemove(it) },
+                        onClear = { vm.queueClear() },
+                        onAdd = { vm.queueAdd(it) },
+                    )
                 }
                 if (s.streamText != null) {
                     item(key = "stream") {
@@ -269,6 +267,14 @@ private fun QueuedCard(
                 )
             }
             Spacer(Modifier.height(4.dp))
+            if (queued.isEmpty()) {
+                Text(
+                    "队列为空。在电脑端任务运行期间在这里追加指令，会自动排队等待发送。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(4.dp))
+            }
             queued.forEachIndexed { idx, q ->
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Text(
