@@ -1,5 +1,6 @@
 package com.zcode.mobile.ui.chat
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,6 +23,10 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -193,29 +198,13 @@ fun ChatScreen(sessionId: String, onBack: () -> Unit) {
                 }
                 if (s.queued.isNotEmpty()) {
                     item(key = "queued") {
-                        Surface(
-                            color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Column(Modifier.padding(10.dp)) {
-                                Text(
-                                    "⏳ 电脑端待发送队列（${s.queued.size}）",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                Spacer(Modifier.height(4.dp))
-                                s.queued.forEach { q ->
-                                    Text(
-                                        "· ${q.text.replace('\n', ' ').take(80)}${if (q.text.length > 80) "…" else ""}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                            }
-                        }
+                        QueuedCard(
+                            queued = s.queued,
+                            onMove = { id, up -> vm.queueMove(id, up) },
+                            onRemove = { vm.queueRemove(it) },
+                            onClear = { vm.queueClear() },
+                            onAdd = { vm.queueAdd(it) },
+                        )
                     }
                 }
                 if (s.streamText != null) {
@@ -245,6 +234,82 @@ fun ChatScreen(sessionId: String, onBack: () -> Unit) {
                 onSend = { prompt, mode -> vm.send(prompt, mode) },
                 onStop = { vm.stop() },
             )
+        }
+    }
+}
+
+/** 待发送队列卡：逐条上移/下移/删除 + 清空 + 追加新指令（写回电脑端队列） */
+@Composable
+private fun QueuedCard(
+    queued: List<com.zcode.mobile.data.QueuedInputDto>,
+    onMove: (String, Boolean) -> Unit,
+    onRemove: (String) -> Unit,
+    onClear: () -> Unit,
+    onAdd: (String) -> Unit,
+) {
+    var newText by remember { mutableStateOf("") }
+    Surface(
+        color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f),
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "⏳ 电脑端待发送队列（${queued.size}）",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    "清空",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.clickable { onClear() },
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+            queued.forEachIndexed { idx, q ->
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        "${idx + 1}. ${q.text.replace('\n', ' ').take(60)}${if (q.text.length > 60) "…" else ""}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(onClick = { if (idx > 0) onMove(q.id, true) }, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "上移", modifier = Modifier.size(16.dp))
+                    }
+                    IconButton(onClick = { if (idx < queued.size - 1) onMove(q.id, false) }, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "下移", modifier = Modifier.size(16.dp))
+                    }
+                    IconButton(onClick = { onRemove(q.id) }, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Filled.Close, contentDescription = "删除", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
+                    }
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = newText,
+                    onValueChange = { newText = it },
+                    placeholder = { Text("追加到电脑端队列…", style = MaterialTheme.typography.bodySmall) },
+                    modifier = Modifier.weight(1f),
+                    textStyle = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                )
+                IconButton(
+                    onClick = {
+                        onAdd(newText.trim())
+                        newText = ""
+                    },
+                    enabled = newText.isNotBlank(),
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = "加入队列")
+                }
+            }
         }
     }
 }

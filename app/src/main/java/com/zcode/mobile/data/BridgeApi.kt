@@ -49,6 +49,19 @@ class BridgeApi(private val settings: SettingsRepo) {
         request<StopResp>(url, token, "POST", "/api/sessions/$id/archive", """{"archived":$archived}""")
     }
 
+    /** 队列管理：action = add(text) / remove(id) / clear / move(id, dir) */
+    suspend fun queueAction(id: String, action: String, text: String? = null, itemId: String? = null, dir: String? = null): List<QueuedInputDto> {
+        val (url, token) = requireConfig()
+        val body = buildString {
+            append("""{"action":"$action"""")
+            if (!text.isNullOrBlank()) append(""","text":${JsonPrimitive(text)}""")
+            if (!itemId.isNullOrBlank()) append(""","id":"$itemId"""")
+            if (!dir.isNullOrBlank()) append(""","dir":"$dir"""")
+            append("}")
+        }
+        return request<QueueResp>(url, token, "POST", "/api/sessions/$id/queue", body).queued
+    }
+
     suspend fun sessionDetail(id: String): SessionDetailDto {
         val (url, token) = requireConfig()
         return request(url, token, "GET", "/api/sessions/$id/messages", null)
@@ -110,3 +123,6 @@ class BridgeException(message: String) : Exception(message)
 
 @Serializable
 private data class StopResp(val ok: Boolean = false)
+
+@Serializable
+private data class QueueResp(val ok: Boolean = false, val queued: List<QueuedInputDto> = emptyList())

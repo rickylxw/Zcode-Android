@@ -188,6 +188,36 @@ async function handleApi(req, res, url) {
     return send(200, { ok: true, archived: store.isSessionArchived(id) });
   }
 
+  const queueMatch = url.pathname.match(/^\/api\/sessions\/(sess_[\w-]+)\/queue$/);
+  if (queueMatch && req.method === 'POST') {
+    const body = await readBody(req);
+    const id = queueMatch[1];
+    if (!store.getSession(id)) return send(404, { error: '会话不存在' });
+    try {
+      switch (body.action) {
+        case 'add':
+          if (!String(body.text ?? '').trim()) return send(400, { error: '内容不能为空' });
+          store.addQueued(id, String(body.text));
+          break;
+        case 'remove':
+          store.removeQueued(id, String(body.id));
+          break;
+        case 'clear':
+          store.clearQueued(id);
+          break;
+        case 'move':
+          store.moveQueued(id, String(body.id), body.dir === 'up' ? 'up' : 'down');
+          break;
+        default:
+          return send(400, { error: '未知 action' });
+      }
+      broadcast({ type: 'session_updated', sessionId: id });
+      return send(200, { ok: true, queued: store.queuedInputs(id) });
+    } catch (e) {
+      return send(409, { error: e.message });
+    }
+  }
+
   const stopMatch = url.pathname.match(/^\/api\/sessions\/(sess_[\w-]+)\/stop$/);
   if (stopMatch && req.method === 'POST') {
     const job = runningJobForSession(stopMatch[1]);

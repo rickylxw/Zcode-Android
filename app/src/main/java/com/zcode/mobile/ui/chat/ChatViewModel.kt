@@ -77,6 +77,27 @@ class ChatViewModel(
         }
     }
 
+    // ---- 待发送队列管理（编辑/新增/调整电脑端队列）----
+
+    fun queueAdd(text: String) = queueAction("add", text = text)
+
+    fun queueRemove(itemId: String) = queueAction("remove", itemId = itemId)
+
+    fun queueClear() = queueAction("clear")
+
+    fun queueMove(itemId: String, up: Boolean) = queueAction("move", itemId = itemId, dir = if (up) "up" else "down")
+
+    private fun queueAction(action: String, text: String? = null, itemId: String? = null, dir: String? = null) {
+        viewModelScope.launch {
+            try {
+                val queued = container.api.queueAction(sessionId, action, text, itemId, dir)
+                _state.value = _state.value.copy(queued = queued)
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(notice = e.message ?: "操作失败")
+            }
+        }
+    }
+
     fun consumeArchiveRequest() {
         _state.value = _state.value.copy(archivedRequested = false)
     }

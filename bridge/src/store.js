@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import * as archive from './archive.js';
@@ -200,13 +201,14 @@ export function getStreamingSnapshot(sessionId) {
 }
 
 /**
- * 会话的待发送输入：桌面端已排队、尚未发给模型的用户指令（delivery='queue'）。
+ * 会话的待发送输入：桌面端排队中、尚未发给模型的用户指令。
+ * 真正待发送 = delivery='queue' 且 status='admitted'（promoted=已发送、cancelled/discarded=已取消）。
  * backgroundNotification 是系统通知不入列表。
  */
 export function queuedInputs(sessionId) {
   const rows = getDb()
     .prepare(
-      "SELECT id, kind, payload FROM session_input WHERE session_id = ? AND delivery = 'queue' AND kind != 'backgroundNotification' ORDER BY admitted_sequence"
+      "SELECT id, kind, payload, time_created FROM session_input WHERE session_id = ? AND delivery = 'queue' AND status = 'admitted' AND kind != 'backgroundNotification' ORDER BY admitted_sequence"
     )
     .all(sessionId);
   return rows.map((r) => {
@@ -214,7 +216,7 @@ export function queuedInputs(sessionId) {
     try {
       text = String(JSON.parse(r.payload).text ?? '');
     } catch {}
-    return { id: r.id, kind: r.kind, text: text.slice(0, 500) };
+    return { id: r.id, kind: r.kind, text: text.slice(0, 500), timeCreated: r.time_created };
   });
 }
 
@@ -222,10 +224,106 @@ export function queuedInputs(sessionId) {
 export function queuedCounts() {
   const rows = getDb()
     .prepare(
-      "SELECT session_id, COUNT(*) AS c FROM session_input WHERE delivery = 'queue' AND kind != 'backgroundNotification' GROUP BY session_id"
+      "SELECT session_id, COUNT(*) AS c FROM session_input WHERE delivery = 'queue' AND status = 'admitted' AND kind != 'backgroundNotification' GROUP BY session_id"
     )
     .all();
   return new Map(rows.map((r) => [r.session_id, r.c]));
+}
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** 可写句柄（桌面可能持有锁，带重试）；用完必须 close */
+function withWritableDb(fn) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    let db = null;
+    try {
+      db = new DatabaseSync(paths.db);
+      const result = fn(db);
+      db.close();
+      return result;
+    } catch (e) {
+      db?.close();
+      if (!/busy|locked/i.test(String(e?.message))) throw e;
+      sleepSync(300);
+    }
+  }
+  throw new Error('数据库被电脑端占用，请稍后重试');
+}
+
+function queueRow(sessionId, id, text, seq) {
+  return {
+    id,
+    session_id: sessionId,
+    kind: 'sendText',
+    delivery: 'queue',
+    payload: JSON.stringify({ text, intent: { sourceCommandId: id.replace(/^queue_/, ''), queueItemId: id } }),
+    admitted_sequence: seq,
+    promoted_sequence: null,
+    promoted_message_id: null,
+    status: 'admitted',
+    status_reason: null,
+    time_created: Date.now(),
+    time_updated: Date.now(),
+  };
+}
+
+/** 手机端新增待发送指令（排在队尾） */
+export function addQueued(sessionId, text) {
+  const clean = String(text ?? '').trim();
+  if (!clean) throw new Error('内容不能为空');
+  return withWritableDb((db) => {
+    const maxSeq = db
+      .prepare('SELECT COALESCE(MAX(admitted_sequence), 0) AS m FROM session_input WHERE session_id = ?')
+      .get(sessionId).m;
+    const id = 'queue_' + crypto.randomUUID();
+    const row = queueRow(sessionId, id, clean, maxSeq + 1);
+    db.prepare(
+      `INSERT INTO session_input (id, session_id, kind, delivery, payload, admitted_sequence, promoted_sequence, promoted_message_id, status, status_reason, time_created, time_updated)
+       VALUES (@id, @session_id, @kind, @delivery, @payload, @admitted_sequence, @promoted_sequence, @promoted_message_id, @status, @status_reason, @time_created, @time_updated)`
+    ).run(row);
+    return { id };
+  });
+}
+
+/** 取消一条待发送（与桌面取消语义一致：status → cancelled，不物理删除） */
+export function removeQueued(sessionId, id) {
+  return withWritableDb((db) => {
+    const res = db
+      .prepare("UPDATE session_input SET status = 'cancelled', time_updated = ? WHERE id = ? AND session_id = ? AND status = 'admitted'")
+      .run(Date.now(), id, sessionId);
+    if (res.changes === 0) throw new Error('该条不存在或已发送');
+    return true;
+  });
+}
+
+/** 清空会话的全部待发送 */
+export function clearQueued(sessionId) {
+  return withWritableDb((db) => {
+    db.prepare("UPDATE session_input SET status = 'cancelled', time_updated = ? WHERE session_id = ? AND delivery = 'queue' AND status = 'admitted'")
+      .run(Date.now(), sessionId);
+    return true;
+  });
+}
+
+/** 调整顺序：与相邻一条交换 admitted_sequence（dir: 'up' | 'down'） */
+export function moveQueued(sessionId, id, dir) {
+  return withWritableDb((db) => {
+    const rows = db
+      .prepare("SELECT id, admitted_sequence AS seq FROM session_input WHERE session_id = ? AND delivery = 'queue' AND status = 'admitted' ORDER BY admitted_sequence")
+      .all(sessionId);
+    const idx = rows.findIndex((r) => r.id === id);
+    if (idx < 0) throw new Error('该条不存在或已发送');
+    const swapIdx = dir === 'up' ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= rows.length) return true; // 已在边缘
+    const a = rows[idx];
+    const b = rows[swapIdx];
+    const upd = db.prepare('UPDATE session_input SET admitted_sequence = ?, time_updated = ? WHERE id = ?');
+    upd.run(b.seq, Date.now(), a.id);
+    upd.run(a.seq, Date.now(), b.id);
+    return true;
+  });
 }
 
 /**
