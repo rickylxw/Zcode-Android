@@ -1,26 +1,22 @@
 import { spawn, execFile } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { builtinProviderCatalog, paths } from './config.js';
+import { paths } from './config.js';
+import { ensureResumableSelection } from './selection.js';
 
 const DEFAULT_MODE = 'yolo'; // 无头模式下 CLI 默认即 yolo；手机端可选 plan/build/edit
 const TURN_TIMEOUT_MS = 30 * 60 * 1000;
 const VALID_MODES = new Set(['build', 'edit', 'plan', 'yolo']);
 
 /**
- * 复刻桌面端启动 agent 时的关键环境：
- * - ZCODE_BUILTIN_PROVIDER_CONFIG_FILE：内置 provider 目录（zcode-builtin.json）。
- *   CLI 0.16.9 起缺了它，resume 引用 builtin 或 account 前缀 provider 的会话会报
- *   「无法定位 builtin provider config」或「Model creation failed」。
- * - ZCODE_PERSONAL_PROVIDER_CONFIG_FILE：桌面端个人 provider 规则（v2/provider_config.json）。
- *   OAuth 凭据无需传递——CLI 直接读 ~/.zcode/v2/credentials.json，密钥按机器+用户推导。
+ * 环境保持原样透传即可。
+ * 实测（0.16.9）：独立无头运行时 CLI 自带 provider 默认解析，直连一切正常；
+ * 若注入桌面端的 ZCODE_BUILTIN_PROVIDER_CONFIG_FILE / ZCODE_PERSONAL_PROVIDER_CONFIG_FILE
+ * （桌面 host 进程专用），反而会破坏模型解析，resume 全部报 Model creation failed。
+ * 旧格式会话（builtin:bigmodel 等旧 id）无论是否注入都续接不了，由错误提示兜底。
  */
 function headlessEnv() {
-  const env = { ...process.env };
-  const catalog = builtinProviderCatalog();
-  if (catalog) env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE = catalog;
-  if (fs.existsSync(paths.v2ProviderConfig)) env.ZCODE_PERSONAL_PROVIDER_CONFIG_FILE = paths.v2ProviderConfig;
-  return env;
+  return { ...process.env };
 }
 
 /**
@@ -72,6 +68,9 @@ export function runTurn({ sessionId = null, directory, prompt, mode = DEFAULT_MO
     if (locks.has(lockKey)) {
       return reject(Object.assign(new Error('该会话正在执行中，请等待完成或先停止'), { code: 'BUSY' }));
     }
+
+    // 会话的模型选择指向已失效的 provider 实例时（桌面端换过实例），先自愈再续接
+    if (sessionId) ensureResumableSelection(sessionId);
 
     const args = [
       paths.zcodeCjs,
