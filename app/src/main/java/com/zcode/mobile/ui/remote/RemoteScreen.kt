@@ -1,7 +1,6 @@
 package com.zcode.mobile.ui.remote
 
 import android.content.Intent
-import android.view.View
 import android.net.Uri
 import android.os.Message
 import android.webkit.CookieManager
@@ -191,8 +190,6 @@ fun RemoteScreen(autoUrl: String? = null, onBack: () -> Unit) {
                     factory = { ctx ->
                         WebView(ctx).apply {
                             if (BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true)
-                            // 模拟器/部分 GPU 驱动下硬件加速的 WebView 会整块渲染成黑屏，改用软件层
-                            setLayerType(View.LAYER_TYPE_SOFTWARE, null)
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
                             settings.mediaPlaybackRequiresUserGesture = false

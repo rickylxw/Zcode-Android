@@ -12,8 +12,8 @@ android {
         applicationId = "com.zcode.mobile"
         minSdk = 26
         targetSdk = 36
-        versionCode = 21
-        versionName = "0.4.13"
+        versionCode = 22
+        versionName = "0.4.14"
     }
 
     // 签名密钥不进仓库：本地构建用 app/release.jks（见 README「发布」），
