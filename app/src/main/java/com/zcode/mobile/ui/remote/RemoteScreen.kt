@@ -217,6 +217,12 @@ fun RemoteScreen(autoUrl: String? = null, onBack: () -> Unit) {
 
                                 override fun onPageFinished(view: WebView?, u: String?) {
                                     loadingPage = false
+                                    // WebView 143 对深色主题页面的绘制存在兼容缺陷（整页输出深色底），
+                                    // 强制切到浅色配色让内容可见
+                                    view?.evaluateJavascript(
+                                        "( ()=>{ const m=document.querySelector('meta[name=color-scheme]'); if(m) m.content='light'; document.documentElement.style.colorScheme='light'; } )()",
+                                        null
+                                    )
                                 }
                                 override fun doUpdateVisitedHistory(view: WebView?, u: String?, isReload: Boolean) {
                                     loadingPage = true
