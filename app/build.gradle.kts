@@ -13,7 +13,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = 23
-        versionName = "0.4.14"
+        versionName = "0.4.15"
     }
 
     // 签名密钥不进仓库：本地构建用 app/release.jks（见 README「发布」），
