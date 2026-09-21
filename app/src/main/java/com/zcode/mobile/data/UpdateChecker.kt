@@ -60,14 +60,19 @@ class UpdateChecker(private val context: Context) {
             val tag = obj["tag_name"]?.let { (it as? JsonPrimitive)?.contentOrNull }
                 ?: throw UpdateException("Release 响应缺少 tag_name")
             val assets = obj["assets"]?.jsonArray ?: throw UpdateException("Release 响应缺少 assets")
-            val apk = assets.asSequence()
+            // 多个 apk 附件时取上传时间最新的（历史版本附件会残留）
+            val apkCandidates = assets.asSequence()
                 .mapNotNull { it as? kotlinx.serialization.json.JsonObject }
                 .mapNotNull { a ->
                     val name = (a["name"] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
                     if (name.endsWith(".apk", ignoreCase = true)) a to name else null
                 }
-                .firstOrNull()
-                ?: throw UpdateException("最新 Release（$tag）里没有 .apk 附件")
+                .toList()
+            if (apkCandidates.isEmpty()) throw UpdateException("最新 Release（$tag）里没有 .apk 附件")
+            // 按 updated_at（ISO 时间，可直接字符串比较）取最新上传的
+            val apk = apkCandidates.maxByOrNull { (asset, _) ->
+                (asset["updated_at"] as? JsonPrimitive)?.contentOrNull ?: ""
+            } ?: apkCandidates.first()
             val url = (apk.first["browser_download_url"] as? JsonPrimitive)?.contentOrNull
                 ?: throw UpdateException("APK 附件缺少下载地址")
             val size = (apk.first["size"] as? JsonPrimitive)?.contentOrNull?.toLongOrNull() ?: 0L
