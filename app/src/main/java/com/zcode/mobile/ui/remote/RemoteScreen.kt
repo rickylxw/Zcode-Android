@@ -72,11 +72,19 @@ fun RemoteScreen(autoUrl: String? = null, onBack: () -> Unit) {
     var useWebView by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
+        if (!autoUrl.isNullOrBlank()) {
+            // 自动化路径：直接保存链接并进入 WebView
+            container.settings.saveRemoteUrl(autoUrl)
+            savedUrl = autoUrl
+            draft = autoUrl
+            useWebView = true
+            loaded = true
+            return@LaunchedEffect
+        }
         savedUrl = container.settings.remoteUrlOnce()
-        draft = autoUrl ?: savedUrl.orEmpty()
+        draft = savedUrl.orEmpty()
         loaded = true
         editing = savedUrl.isNullOrBlank()
-        if (!autoUrl.isNullOrBlank()) container.settings.saveRemoteUrl(autoUrl) // 自动化测试：直接保存
     }
 
     fun saveAndOpen(openBrowser: Boolean) {
