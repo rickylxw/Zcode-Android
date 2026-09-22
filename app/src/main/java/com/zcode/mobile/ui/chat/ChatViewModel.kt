@@ -179,14 +179,20 @@ class ChatViewModel(
 
             is BridgeSocket.Event.Progress -> if (ev.sessionId == sessionId) {
                 when (ev.kind) {
-                    "turn_started" -> pushStep("任务开始")
+                    // 新回合开始：清掉上一个任务残留的动态，从干净列表起步
+                    "turn_started" -> _state.value = _state.value.copy(liveSteps = listOf("1. 任务开始"))
                     "model_request" -> pushStep("模型思考中…")
                     "tool_started" -> pushStep("调用工具 ${ev.toolName ?: ""}")
                     "tool_completed" -> pushStep(
                         "工具 ${ev.toolName ?: ""} 完成" + (ev.durationMs?.let { "（${it}ms）" } ?: "")
                     )
 
-                    "turn_completed" -> pushStep("回合结束，正在整理结果…")
+                    "turn_completed" -> {
+                        // 桌面端发起的回合没有 TurnResult：拉取最终消息并清掉任务动态，
+                        // 否则步骤条一直挂在界面上，直到退出重进
+                        load()
+                        _state.value = _state.value.copy(liveSteps = emptyList(), streamText = null)
+                    }
                 }
             }
 

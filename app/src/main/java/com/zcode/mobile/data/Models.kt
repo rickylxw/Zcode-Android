@@ -49,6 +49,9 @@ data class BlockDto(
 data class MessageDto(
     val id: String,
     val role: String,
+    // 消息语义（bridge 提供）：user_prompt=真实用户输入，todo_reminder=待办提醒，
+    // background_notification=后台任务通知；null 为旧版 bridge 或非 user 消息
+    val semantic: String? = null,
     val timeCreated: Long? = null,
     val blocks: List<BlockDto> = emptyList(),
 )

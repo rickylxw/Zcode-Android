@@ -126,7 +126,9 @@ export function listProjects() {
 
 /**
  * 会话完整历史，归一化为手机端易渲染的结构：
- * messages: [{ id, role, timeCreated, blocks: [{type:'text'|'reasoning'|'tool', ...}] }]
+ * messages: [{ id, role, semantic, timeCreated, blocks: [{type:'text'|'reasoning'|'tool', ...}] }]
+ * semantic = 消息语义（user_prompt=真实用户输入）；运行时内部注入的 user 消息
+ * （todo_reminder / background_notification）不下发。
  */
 export function getMessages(sessionId) {
   const msgs = getDb()
@@ -143,8 +145,13 @@ export function getMessages(sessionId) {
     if (!byMsg.has(p.message_id)) byMsg.set(p.message_id, []);
     byMsg.get(p.message_id).push(JSON.parse(p.data));
   }
-  return msgs.map((m) => {
+  const out = [];
+  for (const m of msgs) {
     const d = JSON.parse(m.data);
+    const semantic = d.semantics?.kind ?? null;
+    // role=user 的消息里混有运行时内部注入（todo 提醒、后台任务通知），不是真实用户输入，
+    // 也不是对话内容——直接不下发（真实输入 = real_user/user_prompt）
+    if (d.role === 'user' && semantic && semantic !== 'user_prompt') continue;
     const blocks = [];
     for (const part of byMsg.get(m.id) ?? []) {
       if (part.type === 'text' && part.text) {
@@ -161,8 +168,9 @@ export function getMessages(sessionId) {
       }
       // step-start / step-finish 对渲染无意义，跳过
     }
-    return { id: m.id, role: d.role, timeCreated: d.time?.created ?? null, blocks };
-  });
+    out.push({ id: m.id, role: d.role, semantic, timeCreated: d.time?.created ?? null, blocks });
+  }
+  return out;
 }
 
 function previewInput(input) {

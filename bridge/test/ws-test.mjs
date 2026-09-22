@@ -11,7 +11,7 @@ const cfg = JSON.parse(fs.readFileSync(path.join(root, 'bridge.config.json'), 'u
 const sessionId = process.argv[2] ?? null;
 const directory = process.argv[3] ?? 'E:\\Documents\\GitHub\\ZCode Android\\.probe';
 
-const ws = new WebSocket(`ws://127.0.0.1:8787/ws?token=${cfg.token}`);
+const ws = new WebSocket(`ws://127.0.0.1:${process.env.BRIDGE_PORT ?? 8787}/ws?token=${cfg.token}`);
 const seen = { accepted: false, progress: 0, result: null };
 const tools = new Set();
 

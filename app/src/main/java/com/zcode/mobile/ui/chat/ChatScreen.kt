@@ -166,7 +166,15 @@ fun ChatScreen(sessionId: String, onBack: () -> Unit) {
             ) {
                 val msgs = s.messages
                 msgs.forEachIndexed { idx, m ->
-                    if (m.role == "user") {
+                    // 只把真实用户输入画成用户气泡；todo 提醒/后台通知是运行时内部注入，
+                    // 即使被旧版 bridge 标成 user 也按语义跳过
+                    val isRealUserInput =
+                        m.role == "user" &&
+                            m.semantic != "todo_reminder" &&
+                            m.semantic != "background_notification"
+                    if (m.role == "system_event") {
+                        // 运行时内部注入（todo 提醒/后台任务通知）：对话流中不展示
+                    } else if (isRealUserInput) {
                         item(key = m.id) {
                             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
                                 Surface(

@@ -87,6 +87,7 @@ export class LogTail {
       kind,
       toolName: e.context?.toolName ?? null,
       durationMs: e.durationMs ?? null,
+      turnId: e.turnId ?? null, // 跨运行时互斥用：协议事件对得上的是自己人，对不上的是外来回合
       timestamp: e.timestamp,
     });
   }
@@ -126,10 +127,12 @@ export function initialRunningSet() {
       else if (e.event === 'turn.completed') running.delete(e.sessionId);
     }
   } catch {}
-  // 超过 12h 没有任何事件的，视为历史残留，不算运行中
+  // 超过 30 分钟没有任何事件的，视为历史残留，不算运行中——回合进行中必然会持续
+  // 产生事件（模型请求/工具/流式），30 分钟静默只可能是进程被杀没落 turn.completed
+  // 的幽灵（测试脚本、强杀），真实长回合不受影响
   for (const sid of running) {
     const ts = lastSeen.get(sid) ?? 0;
-    if (now - ts > 12 * 3600 * 1000) running.delete(sid);
+    if (now - ts > 30 * 60 * 1000) running.delete(sid);
   }
   return running;
 }
