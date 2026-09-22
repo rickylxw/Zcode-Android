@@ -97,6 +97,15 @@ function handleLine(p, line) {
 
 /** server→client 请求必须应答，否则发起方挂起。应答格式均为 0.16.9 实测定论。 */
 function handleServerRequest(p, msg) {
+  // 权限审批 / AskUserQuestion：转发给手机订阅者等真实应答（120s 超时回退默认策略）
+  if (msg.method === 'interaction/requestPermission' || msg.method === 'interaction/requestUserInput') {
+    const kind = msg.method === 'interaction/requestPermission' ? 'permission' : 'user_input';
+    const fallback = interactionFallback(kind, msg.params);
+    handleInteraction(msg.params?.sessionId ?? null, kind, msg.params, fallback)
+      .then((result) => writeResponse(p, msg.id, result))
+      .catch(() => writeResponse(p, msg.id, fallback()));
+    return;
+  }
   let result = {};
   switch (msg.method) {
     case 'session/requestRuntimePreferences': {
@@ -109,20 +118,6 @@ function handleServerRequest(p, msg) {
       };
       break;
     }
-    case 'interaction/requestPermission': {
-      // 手机端暂无审批 UI：与无头 CLI 的 yolo 行为对齐，自动放行单次。
-      // permission.requested/resolved 事件照常推送，手机端可见工具在跑。
-      const opt = (msg.params?.options ?? []).find((o) => o.optionId === 'allow_once') ?? (msg.params?.options ?? [])[0];
-      result = opt?.response ?? { decision: 'allow', reason: 'Approved by bridge' };
-      break;
-    }
-    case 'interaction/requestUserInput': {
-      // 手机端暂无提问 UI：自动采纳第一个选项（阻塞等待更不可接受）
-      const q = (msg.params?.questions ?? [])[0];
-      const pick = q?.options?.[0]?.value ?? q?.options?.[0]?.label ?? '继续';
-      result = { action: 'accept', content: { answer: pick } };
-      break;
-    }
     case 'interaction/requestOfficialMcpAuthHeaders':
       result = {};
       break;
@@ -130,9 +125,70 @@ function handleServerRequest(p, msg) {
       console.warn('[appserver] 未知的 server→client 请求（回空对象）:', msg.method);
       result = {};
   }
+  writeResponse(p, msg.id, result);
+}
+
+function writeResponse(p, id, result) {
   try {
-    p.child.stdin.write(JSON.stringify({ id: msg.id, result }) + '\n');
+    p.child.stdin.write(JSON.stringify({ id, result }) + '\n');
   } catch {}
+}
+
+/** 超时/无人观看时的默认策略：与无头 CLI 的 yolo 行为对齐（放行单次 / 采纳第一个选项） */
+function interactionFallback(kind, params) {
+  if (kind === 'permission') {
+    const opt = (params?.options ?? []).find((o) => o.optionId === 'allow_once') ?? (params?.options ?? [])[0];
+    return opt?.response ?? { decision: 'allow', reason: 'Approved by bridge' };
+  }
+  const q = (params?.questions ?? [])[0];
+  const pick = q?.options?.[0]?.value ?? q?.options?.[0]?.label ?? '继续';
+  return { action: 'accept', content: { answer: pick } };
+}
+
+// ---------- 交互请求转发（权限审批 / AskUserQuestion → 手机端） ----------
+
+let interactionHandler = null; // (sessionId, req) => 是否有手机端在观看；server.js 注入
+const pendingInteractions = new Map(); // requestId -> { resolve, timer }
+const INTERACTION_TIMEOUT_MS = 120 * 1000;
+
+/** server.js 注入转发函数：把请求推给订阅该会话的手机端，返回是否有观众 */
+export function setInteractionHandler(fn) {
+  interactionHandler = fn;
+}
+
+/** 手机端（或超时回退）的应答入口；返回 false = 请求已超时/不存在 */
+export function appServerRespond(requestId, response) {
+  const p = pendingInteractions.get(requestId);
+  if (!p) return false;
+  pendingInteractions.delete(requestId);
+  clearTimeout(p.timer);
+  p.resolve(response);
+  return true;
+}
+
+function handleInteraction(sessionId, kind, params, fallback) {
+  const req = {
+    requestId: 'req_' + crypto.randomBytes(6).toString('hex'),
+    kind,
+    toolName: params?.toolName ?? null,
+    riskLevel: params?.riskLevel ?? null,
+    reason: params?.reason ?? params?.prompt ?? null,
+    input: params?.input ?? null,
+    options: params?.options ?? null,
+    questions: params?.questions ?? null,
+  };
+  const hasAudience = interactionHandler?.(sessionId, { ...req, sessionId }) ?? false;
+  if (!hasAudience) return Promise.resolve(fallback());
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      if (pendingInteractions.delete(req.requestId)) {
+        console.log(`[appserver] 交互请求超时（${kind}），使用默认策略: ${sessionId ?? ''}`);
+        interactionHandler?.expired?.(sessionId, req.requestId);
+        resolve(fallback());
+      }
+    }, INTERACTION_TIMEOUT_MS);
+    pendingInteractions.set(req.requestId, { resolve, timer });
+  });
 }
 
 function call(method, params, timeoutMs = 30000) {
@@ -402,11 +458,10 @@ function appServerEventKind(ev) {
   switch (ev.type) {
     case 'turn.started':
       return 'turn_started';
-    case 'tool.updated':
-      // scheduled=工具开始调度，batch=一批工具出结果
-      return ev.payload?.kind === 'scheduled' ? 'tool_started' : 'tool_completed';
     default:
-      // model.streaming 的每个 delta 不映射进度事件（会刷屏），流式内容走 stream 快照通道
+      // tool.updated 不在此映射：本方回合的工具事件与共享日志（logtail）重复，
+      // 统一由 logtail 单通道提供（kind 同为 tool_started/tool_completed）；
+      // model.streaming 的增量也不映射进度事件（会刷屏），流式内容走 stream 快照通道
       return null;
   }
 }

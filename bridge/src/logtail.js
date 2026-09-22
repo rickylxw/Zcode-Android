@@ -104,10 +104,12 @@ function latestLogFile() {
 /**
  * 启动时回放当日日志，找出「turn.started 之后还没等到 turn.completed」的会话，
  * 作为运行中集合的种子——覆盖桥接重启期间桌面端或其他客户端正在跑的回合。
- * 只看近 12h 的事件，避免把远古崩溃残留当成运行中。
+ * 返回 Map<sessionId, turnStartedTs>：时间戳取日志里 turn.started 事件的时刻，
+ * 即回合的真实开始时间（可能早于桥接启动），供看板显示正确的运行时长。
+ * 只看近 30 分钟内仍活跃的事件，避免把远古崩溃残留当成运行中。
  */
 export function initialRunningSet() {
-  const running = new Set();
+  const running = new Map(); // sessionId -> turn.started 的时间戳
   const lastSeen = new Map();
   const now = Date.now();
   try {
@@ -123,7 +125,7 @@ export function initialRunningSet() {
       }
       if (!e.sessionId) continue;
       if (e.timestamp) lastSeen.set(e.sessionId, Date.parse(e.timestamp) || 0);
-      if (e.event === 'turn.started') running.add(e.sessionId);
+      if (e.event === 'turn.started') running.set(e.sessionId, Date.parse(e.timestamp) || now);
       else if (e.event === 'turn.completed') running.delete(e.sessionId);
     }
   } catch {}

@@ -195,6 +195,21 @@ session_updated ×2（开始+结束）、progress 全集（turn_started/model_re
 
 **验证**：生产实例（8787）真实投递——空闲会话入队 "Reply with exactly: QUEUE_FINAL_OK" → 一次扫描完成投递 → 回复出现在会话中、队列清空。
 
+### mini 看板动态刷屏修复（2026-09-22）
+
+「最近动态」同一工具连出三条：bridge 自己的回合，工具事件从协议（tool.updated）和共享日志（tool.call.completed）两条通道各送一份，且 batch 事件一次工具可发多条。修复：
+1. 协议通道不再映射 `tool.updated`（appserver.js 的 appServerEventKind 移除）——工具/模型请求事件统一由共享日志单通道提供，手机端步骤与看板动态各自只收一份；
+2. mini.html 最近动态聚合：同一会话同类事件 15 秒内重复合并为一行并显示 ×N 计数（真实的高频工具调用也不再刷屏）。
+
+### 7.7 交互能力上手机：权限审批与 AskUserQuestion —— ✅ 已实现并验证（2026-09-22，0.4.19）
+
+此前手机端的审批/提问策略是无脑自动放行/自动选第一项。现改为**真实交互**：
+
+- **bridge**（appserver.js）：`interaction/requestPermission` 与 `interaction/requestUserInput` 不再立即自动应答，而是经 `setInteractionHandler` 转发给订阅该会话的手机端（新 WS 消息 `{type:'request', requestId, kind, toolName, riskLevel, reason, input, options, questions}`），挂起等待 `{type:'respond', requestId, response}`；**120 秒超时或无人观看时回退默认策略**（放行单次/采纳第一项）。
+- **App**（BridgeSocket + ChatViewModel + ChatScreen）：新增 `request` 消息解析与 `Event.InteractionRequest`；聊天页弹出审批对话框——权限请求展示工具名/风险等级/原因/入参并按 option 生成按钮（回显 `option.response` 应答），提问展示问题与选项（应答 `{action:'accept', content:{answer:值}}`），另有"稍后再说"（超时走默认策略）。
+- **验证**（`bridge/test/approval-test.mjs`）：build 模式发起写文件任务 → 桥接转发权限请求 → 应答 allow_once → 工具真实执行 → 回合完成 → **PASS**。
+- 至此桌面端的工具审批与提问交互在手机端补齐；yolo 模式服务端不发起审批，行为不变。
+
 ### 运行标记幽灵修复（2026-09-22）
 
 看板「运行中的任务」出现早已结束却停不掉的任务：根因是测试/被强杀的进程来不及把 `turn.completed` 落入共享日志，启动回放（initialRunningSet）按「有 started 无 completed」把它们误判为运行中（旧窗口宽至 12 小时）。修复：

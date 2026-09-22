@@ -41,7 +41,12 @@ function startTurn(opts) {
 // 因此记录最后活动时间，由 reaper 定期回收空闲超 8 分钟的条目。
 const RUNNING_IDLE_MS = 8 * 60 * 1000;
 const runningSessions = new Map(); // sessionId -> 最后一次相关日志事件的时间戳
-for (const sid of initialRunningSet()) runningSessions.set(sid, Date.now());
+const turnStarts = new Map(); // sessionId -> 当前回合的真实开始时间（看板运行时长用）
+// 日志回放给出 turn.started 的原始时刻，可能早于桥接启动——重启不丢已跑时长
+for (const [sid, startedAt] of initialRunningSet()) {
+  runningSessions.set(sid, Date.now());
+  turnStarts.set(sid, startedAt);
+}
 
 function mergedQueue(sessionId) {
   const phone = bqueue.list(sessionId).map((x) => ({ id: x.id, source: 'phone', text: x.text, timeCreated: x.ts }));
@@ -115,6 +120,7 @@ setInterval(() => {
   for (const [sid, ts] of runningSessions) {
     if (now - ts > RUNNING_IDLE_MS) {
       runningSessions.delete(sid);
+      turnStarts.delete(sid);
       broadcast({ type: 'session_updated', sessionId: sid }); // 让手机刷新掉「运行中」
       broadcastStatus();
     }
@@ -134,6 +140,19 @@ const jobSubscribers = new Map(); // jobId -> Set<ws>
 const sessionSubscribers = new Map(); // sessionId -> Set<ws>
 const sessionToJob = new Map(); // sessionId -> jobId（绑定后的路由表）
 const streamPumps = new Map(); // jobId -> 轮询定时器（泵自检 job 存活性，结束自动清除）
+
+// 交互请求转发（权限审批 / AskUserQuestion）：推给订阅该会话的手机端等真实应答；
+// 无人观看（订阅者为空）时 appserver 走默认策略（放行单次 / 采纳第一个选项）
+appserver.setInteractionHandler((sessionId, req) => {
+  const subs = sessionSubscribers.get(sessionId);
+  if (!subs || subs.size === 0) return false;
+  const msg = JSON.stringify({ type: 'request', ...req, sessionId });
+  let sent = 0;
+  for (const w of subs) {
+    if (w.readyState === w.OPEN) { w.send(msg); sent++; }
+  }
+  return sent > 0;
+});
 
 // ---------- mini 桌面看板（/mini） ----------
 // mini 页面的 WS 连接带 client=mini 标记，发 watch 后订阅全局状态：所有运行中会话的
@@ -167,8 +186,9 @@ function statusSnapshot() {
     try {
       s = store.getSession(sid);
     } catch {}
-    // 桥接自己发起的回合有精确 startedAt；桌面端驱动的回合退化为最近一次事件时间
+    // 起点优先级：桥接回合的精确 startedAt > 日志里的真实回合开始时间 > 最后活动时间（兜底）
     const job = jobForSession(sid);
+    const since = job?.startedAt ?? turnStarts.get(sid) ?? ts;
     running.push({
       sessionId: sid,
       title: s?.title ?? null,
@@ -177,7 +197,7 @@ function statusSnapshot() {
       mode: job?.mode ?? null,
       model: job?.model ?? null,
       prompt: job?.prompt ? String(job.prompt).slice(0, 200) : null,
-      since: job?.startedAt ?? ts,
+      since,
       events: recentEvents.get(sid) ?? [],
       queueItems: mergedQueue(sid).slice(0, 10).map((q) => ({ source: q.source, text: String(q.text).slice(0, 160) })),
     });
@@ -232,6 +252,7 @@ function onLogEvent(sessionId, event) {
     // 跨运行时互斥（桌面优先）：日志里的回合若不是本桥接协议事件里的，说明桌面端
     // （或其他运行时）开始驱动该会话 → 中止本方回合让位
     if (ENGINE === 'appserver') appserver.appServerYieldToForeignTurn(sessionId, event.turnId);
+    turnStarts.set(sessionId, Date.parse(event.timestamp) || Date.now()); // 看板运行时长的真实起点
     // 桌面端/CLI 发起的回合：广播给手机端（会话列表运行标记 + 聊天页进入运行态）
     broadcast({ type: 'session_updated', sessionId });
     broadcastStatus();
@@ -239,6 +260,7 @@ function onLogEvent(sessionId, event) {
   }
   if (event.kind === 'turn_completed') {
     runningSessions.delete(sessionId);
+    turnStarts.delete(sessionId);
     stopPassivePump(sessionId);
     // 关键同步点：回合结束必须广播，否则正在看该会话的手机端不知道要拉取新消息
     broadcast({ type: 'session_updated', sessionId });
@@ -278,6 +300,7 @@ function onAppServerEvent(sessionId, event) {
   }
   if (event.kind === 'turn_completed') {
     runningSessions.delete(sessionId);
+    turnStarts.delete(sessionId);
     broadcast({ type: 'session_updated', sessionId }); // 非发起端的观看者拉取最终消息
     broadcastStatus();
     setTimeout(() => tryDeliverQueued().catch(() => {}), 3000);
@@ -307,6 +330,17 @@ function ensurePassivePump(sessionId) {
   if (jobForSession(sessionId)) return; // bridge 自己的回合由 job 泵负责
   if ((sessionSubscribers.get(sessionId)?.size ?? 0) === 0 && watchers.size === 0) return; // 没人看就不泵
   let lastSig = '';
+  let todoRowid = 0;
+  let todosPayload;
+  const sendFrame = (snap) => {
+    const targets = new Set(watchers);
+    for (const w of sessionSubscribers.get(sessionId) ?? []) targets.add(w);
+    for (const w of targets) {
+      if (w.readyState === w.OPEN) {
+        w.send(JSON.stringify({ type: 'stream', sessionId, jobId: null, text: snap.text, reasoning: snap.reasoning, todos: todosPayload }));
+      }
+    }
+  };
   const pump = setInterval(() => {
     if ((sessionSubscribers.get(sessionId)?.size ?? 0) === 0 && watchers.size === 0) {
       // 订阅者全走了，泵失去意义
@@ -319,16 +353,17 @@ function ensurePassivePump(sessionId) {
     } catch {
       return;
     }
-    const sig = snap.text.length + '/' + snap.reasoning.length;
+    try {
+      const todo = store.getStreamingTodo(sessionId, todoRowid);
+      if (todo) {
+        todoRowid = todo.lastRowid;
+        if (todo.todos) todosPayload = todo.todos;
+      }
+    } catch {}
+    const sig = snap.text.length + '/' + snap.reasoning.length + '/' + (todosPayload?.length ?? 0);
     if (sig === lastSig) return;
     lastSig = sig;
-    const targets = new Set(watchers);
-    for (const w of sessionSubscribers.get(sessionId) ?? []) targets.add(w);
-    for (const w of targets) {
-      if (w.readyState === w.OPEN) {
-        w.send(JSON.stringify({ type: 'stream', sessionId, jobId: null, text: snap.text, reasoning: snap.reasoning }));
-      }
-    }
+    sendFrame(snap);
   }, 1000);
   passivePumps.set(sessionId, pump);
 }
@@ -517,6 +552,7 @@ async function handleApi(req, res, url) {
     // 清理后立即尝试队列投递（残留标记期间被跳过的排队消息马上发出）
     if (runningSessions.has(sid)) {
       runningSessions.delete(sid);
+      turnStarts.delete(sid);
       broadcastStatus();
       broadcast({ type: 'session_updated', sessionId: sid });
       setTimeout(() => tryDeliverQueued().catch(() => {}), 500);
@@ -584,6 +620,9 @@ function handleWsMessage(ws, raw) {
 
         // 流式泵：回合进行中每秒取最新助手消息已生成的文本，快照推给订阅者。
         // appserver 引擎优先用协议增量累积的文本（零延迟）；回退读 SQLite part 表。
+        // todo 流式：增量扫描 TodoWrite 工具输入（rowid 水位），清单变化时随帧下发
+        let todoRowid = 0;
+        let todosPayload;
         const pump = setInterval(() => {
           const j = jobById(job.id);
           if (!j) {
@@ -601,12 +640,19 @@ function handleWsMessage(ws, raw) {
               return;
             }
           }
+          try {
+            const todo = store.getStreamingTodo(sid, todoRowid);
+            if (todo) {
+              todoRowid = todo.lastRowid;
+              if (todo.todos) todosPayload = todo.todos;
+            }
+          } catch {}
           const streamTargets = new Set(watchers);
           for (const w of jobSubscribers.get(job.id) ?? []) streamTargets.add(w);
           for (const w of sessionSubscribers.get(sid) ?? []) streamTargets.add(w); // 同会话的其他观看者也能看到流
           for (const w of streamTargets) {
             if (w.readyState === w.OPEN) {
-              w.send(JSON.stringify({ type: 'stream', sessionId: sid, jobId: job.id, text: snap.text, reasoning: snap.reasoning }));
+              w.send(JSON.stringify({ type: 'stream', sessionId: sid, jobId: job.id, text: snap.text, reasoning: snap.reasoning, todos: todosPayload }));
             }
           }
         }, 1000);
@@ -617,6 +663,7 @@ function handleWsMessage(ws, raw) {
         if (result.sessionId) {
           sessionToJob.delete(result.sessionId); // 回合结束，路由表防泄漏
           runningSessions.delete(result.sessionId);
+          turnStarts.delete(result.sessionId);
           broadcastStatus();
           // 把会话登记进桌面任务索引，让电脑端任务列表能看到手机发起的任务
           try { store.syncTasksIndex(result.sessionId); } catch {}
@@ -636,11 +683,18 @@ function handleWsMessage(ws, raw) {
       .catch((err) => {
         if (sessionId) {
           runningSessions.delete(sessionId);
+          turnStarts.delete(sessionId);
           broadcastStatus();
         }
         ws.send(JSON.stringify({ type: 'error', requestId, code: err.code, message: err.message }));
       });
     return;
+  }
+
+  // 审批/提问应答：手机端对 request 的回复，转交给挂起的 app-server 交互请求
+  if (msg.type === 'respond' && typeof msg.requestId === 'string') {
+    const ok = ENGINE === 'appserver' ? appserver.appServerRespond(msg.requestId, msg.response) : false;
+    return ws.send(JSON.stringify({ type: 'respond_ack', requestId: msg.requestId, ok }));
   }
 
   if (msg.type === 'stop_job' && typeof msg.jobId === 'string') {

@@ -25,6 +25,9 @@ data class ChatUiState(
     val lastUsage: String? = null, // 上一回合的 token 用量摘要
     val archivedRequested: Boolean = false, // 归档成功，请求退出当前页面
     val streamText: String? = null, // 流式输出：回合进行中当前已生成的正文（null = 无流式）
+    val streamReasoning: String? = null, // 流式输出：回合进行中当前已生成的思考文本（null = 无）
+    val streamTodos: List<com.zcode.mobile.data.TodoItemDto> = emptyList(), // 流式待办清单（TodoWrite 实时更新）
+    val pendingRequest: BridgeSocket.Event.InteractionRequest? = null, // 待应答的权限审批/提问（null = 无）
     val queued: List<com.zcode.mobile.data.QueuedInputDto> = emptyList(), // 电脑端待发送队列
 )
 
@@ -171,16 +174,37 @@ class ChatViewModel(
         }
     }
 
+    /** 应答权限审批/提问（response 为要回传给电脑端的 JSON 对象） */
+    fun respondRequest(response: kotlinx.serialization.json.JsonObject) {
+        val req = _state.value.pendingRequest ?: return
+        container.socket.respondRequest(req.requestId, response)
+        _state.value = _state.value.copy(pendingRequest = null)
+    }
+
+    /** 不应答直接关闭对话框（电脑端超时后会走默认策略） */
+    fun dismissRequest() {
+        _state.value = _state.value.copy(pendingRequest = null)
+    }
+
     private suspend fun handleEvent(ev: BridgeSocket.Event) {
         when (ev) {
             is BridgeSocket.Event.Stream -> if (ev.sessionId == sessionId) {
-                _state.value = _state.value.copy(streamText = ev.text.ifBlank { null })
+                _state.value = _state.value.copy(
+                    streamText = ev.text.ifBlank { null },
+                    streamReasoning = ev.reasoning.ifBlank { null },
+                    // todos 缺省 = 沿用上一帧的清单（bridge 只在清单变化时随帧下发）
+                    streamTodos = ev.todos ?: _state.value.streamTodos,
+                )
             }
 
             is BridgeSocket.Event.Progress -> if (ev.sessionId == sessionId) {
                 when (ev.kind) {
                     // 新回合开始：清掉上一个任务残留的动态，从干净列表起步
-                    "turn_started" -> _state.value = _state.value.copy(liveSteps = listOf("1. 任务开始"))
+                    "turn_started" -> {
+                        lastStepLabel = null
+                        lastStepAtMs = 0L
+                        _state.value = _state.value.copy(liveSteps = listOf("1. 任务开始"))
+                    }
                     "model_request" -> pushStep("模型思考中…")
                     "tool_started" -> pushStep("调用工具 ${ev.toolName ?: ""}")
                     "tool_completed" -> pushStep(
@@ -191,7 +215,7 @@ class ChatViewModel(
                         // 桌面端发起的回合没有 TurnResult：拉取最终消息并清掉任务动态，
                         // 否则步骤条一直挂在界面上，直到退出重进
                         load()
-                        _state.value = _state.value.copy(liveSteps = emptyList(), streamText = null)
+                        _state.value = _state.value.copy(liveSteps = emptyList(), streamText = null, streamReasoning = null, streamTodos = emptyList())
                     }
                 }
             }
@@ -213,12 +237,18 @@ class ChatViewModel(
                     running = false,
                     liveSteps = emptyList(),
                     streamText = null,
+                    streamReasoning = null,
+                    streamTodos = emptyList(),
                     lastUsage = usageText,
                 )
                 load() // 重新拉取，让工具块/思考块完整呈现
             }
 
             is BridgeSocket.Event.SessionUpdated -> if (ev.sessionId == sessionId) load()
+
+            is BridgeSocket.Event.InteractionRequest -> if (ev.sessionId == sessionId) {
+                _state.value = _state.value.copy(pendingRequest = ev)
+            }
 
             is BridgeSocket.Event.Failure -> if (ev.requestId == null || ev.requestId == pendingRequestId) {
                 pendingRequestId = null
@@ -234,7 +264,15 @@ class ChatViewModel(
         }
     }
 
+    private var lastStepLabel: String? = null
+    private var lastStepAtMs = 0L
+
     private fun pushStep(label: String) {
+        // 进度事件可能来自双通道（协议 + 共享日志各一份）：1.5s 内完全相同的步骤去重
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (label == lastStepLabel && now - lastStepAtMs < 1500) return
+        lastStepLabel = label
+        lastStepAtMs = now
         val current = _state.value.liveSteps.toMutableList()
         current.add("${current.size + 1}. $label")
         val trimmed = if (current.size > 30) current.takeLast(30) else current

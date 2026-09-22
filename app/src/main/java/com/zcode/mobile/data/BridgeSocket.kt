@@ -54,16 +54,30 @@ class BridgeSocket(private val settings: SettingsRepo) {
             val cacheReadTokens: Long? = null,
         ) : Event
 
-        /** 流式文本快照（回合进行中每秒一次，text 为当前已生成的完整正文） */
+        /** 流式文本快照（回合进行中每秒一次，text 为当前已生成的完整正文；todos 为实时待办清单，缺省 = 沿用上一帧） */
         data class Stream(
             val sessionId: String,
             val jobId: String?,
             val text: String,
             val reasoning: String,
+            val todos: List<TodoItemDto>? = null,
         ) : Event
 
         data class SessionUpdated(val sessionId: String?) : Event
         data class Failure(val requestId: String?, val code: String?, val message: String) : Event
+
+        /** 电脑端发来的交互请求：kind=permission（工具审批）| user_input（AskUserQuestion） */
+        data class InteractionRequest(
+            val requestId: String,
+            val sessionId: String?,
+            val kind: String,
+            val toolName: String? = null,
+            val riskLevel: String? = null,
+            val reason: String? = null,
+            val input: kotlinx.serialization.json.JsonObject? = null,
+            val options: kotlinx.serialization.json.JsonArray? = null,
+            val questions: kotlinx.serialization.json.JsonArray? = null,
+        ) : Event
     }
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -167,6 +181,11 @@ class BridgeSocket(private val settings: SettingsRepo) {
         ws?.send("""{"type":"subscribe","sessionId":"${esc(sessionId)}"}""")
     }
 
+    /** 应答电脑端的交互请求（权限审批 / AskUserQuestion）；response 为应答 JSON 对象 */
+    fun respondRequest(requestId: String, response: kotlinx.serialization.json.JsonObject) {
+        ws?.send("""{"type":"respond","requestId":"${esc(requestId)}","response":$response}""")
+    }
+
     private fun handleMessage(text: String) {
         val obj = try {
             json.parseToJsonElement(text).jsonObject
@@ -209,16 +228,42 @@ class BridgeSocket(private val settings: SettingsRepo) {
                 )
             }
 
-            "stream" -> _events.tryEmit(
-                Event.Stream(
-                    sessionId = str("sessionId") ?: return,
-                    jobId = str("jobId"),
-                    text = (obj["text"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
-                    reasoning = (obj["reasoning"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+            "stream" -> {
+                val todos = (obj["todos"] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { t ->
+                    (t as? kotlinx.serialization.json.JsonObject)?.let { o ->
+                        val content = (o["content"] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
+                        TodoItemDto(
+                            content = content,
+                            status = (o["status"] as? JsonPrimitive)?.contentOrNull ?: "pending",
+                        )
+                    }
+                }
+                _events.tryEmit(
+                    Event.Stream(
+                        sessionId = str("sessionId") ?: return,
+                        jobId = str("jobId"),
+                        text = (obj["text"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+                        reasoning = (obj["reasoning"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+                        todos = todos,
+                    )
                 )
-            )
+            }
 
             "session_updated" -> _events.tryEmit(Event.SessionUpdated(str("sessionId")))
+
+            "request" -> _events.tryEmit(
+                Event.InteractionRequest(
+                    requestId = str("requestId") ?: return,
+                    sessionId = str("sessionId"),
+                    kind = str("kind") ?: return,
+                    toolName = str("toolName"),
+                    riskLevel = str("riskLevel"),
+                    reason = str("reason"),
+                    input = obj["input"] as? kotlinx.serialization.json.JsonObject,
+                    options = obj["options"] as? kotlinx.serialization.json.JsonArray,
+                    questions = obj["questions"] as? kotlinx.serialization.json.JsonArray,
+                )
+            )
 
             "error" -> _events.tryEmit(
                 Event.Failure(requestId = str("requestId"), code = str("code"), message = str("message") ?: "未知错误")

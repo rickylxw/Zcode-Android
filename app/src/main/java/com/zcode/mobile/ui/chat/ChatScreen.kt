@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -55,6 +56,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import com.zcode.mobile.data.BridgeSocket
 import com.zcode.mobile.ui.appViewModel
 import com.zcode.mobile.ui.common.ErrorBox
 import com.zcode.mobile.ui.common.LoadingBox
@@ -79,7 +86,7 @@ fun ChatScreen(sessionId: String, onBack: () -> Unit) {
     val listState = rememberLazyListState()
     var menuExpanded by remember { mutableStateOf(false) }
 
-    LaunchedEffect(s.messages.size, s.liveSteps.size, s.streamText) {
+    LaunchedEffect(s.messages.size, s.liveSteps.size, s.streamText, s.streamReasoning, s.streamTodos) {
         // 滚到列表真实最后一项（估算会越界）
         val last = listState.layoutInfo.totalItemsCount
         if (last > 0) listState.animateScrollToItem(last - 1)
@@ -152,6 +159,11 @@ fun ChatScreen(sessionId: String, onBack: () -> Unit) {
             }
         }
 
+        // 电脑端的交互请求（权限审批 / AskUserQuestion）：模态对话框，选项即答
+        s.pendingRequest?.let { req ->
+            ApprovalDialog(req = req, onRespond = { vm.respondRequest(it) }, onDismiss = { vm.dismissRequest() })
+        }
+
         Column(
             Modifier
                 .fillMaxSize()
@@ -204,6 +216,16 @@ fun ChatScreen(sessionId: String, onBack: () -> Unit) {
                                 }
                             }
                         }
+                    }
+                }
+                if (s.streamReasoning != null) {
+                    item(key = "streamReasoning") {
+                        LiveReasoningBlock(s.streamReasoning ?: "")
+                    }
+                }
+                if (s.streamTodos.isNotEmpty()) {
+                    item(key = "streamTodos") {
+                        LiveTodoCard(s.streamTodos)
                     }
                 }
                 if (s.streamText != null) {
@@ -476,4 +498,84 @@ private fun InputBar(
             }
         }
     }
+}
+
+/** 权限审批 / 电脑端提问对话框：把交互请求的选项呈现给用户，点选即应答 */
+@Composable
+fun ApprovalDialog(
+    req: BridgeSocket.Event.InteractionRequest,
+    onRespond: (JsonObject) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                when (req.kind) {
+                    "permission" -> "权限审批" + (req.riskLevel?.let { " · $it" } ?: "")
+                    else -> "电脑端提问"
+                }
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (req.kind == "permission") {
+                    Text(
+                        "工具 ${req.toolName ?: "未知"} 请求执行",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    req.reason?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    req.input?.toString()?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 4,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                } else {
+                    val q = (req.questions?.firstOrNull() as? JsonObject)
+                    q?.get("question")?.let { qText ->
+                        Text((qText as? JsonPrimitive)?.content ?: "", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            // 选项按钮按 kind 生成：permission 回显 option.response；user_input 回传所选 value
+            when (req.kind) {
+                "permission" -> {
+                    val opts = req.options ?: JsonArray(emptyList())
+                    opts.forEach { o ->
+                        val obj = o as? JsonObject ?: return@forEach
+                        val name = (obj["name"] as? JsonPrimitive)?.content ?: return@forEach
+                        val response = obj["response"] as? JsonObject ?: return@forEach
+                        TextButton(onClick = { onRespond(response) }) { Text(name) }
+                    }
+                }
+                else -> {
+                    val q = (req.questions?.firstOrNull() as? JsonObject)
+                    val qOpts = (q?.get("options") as? JsonArray) ?: JsonArray(emptyList())
+                    qOpts.forEach { o ->
+                        val obj = o as? JsonObject ?: return@forEach
+                        val label = (obj["label"] as? JsonPrimitive)?.content ?: return@forEach
+                        val value = (obj["value"] as? JsonPrimitive)?.content ?: label
+                        TextButton(onClick = {
+                            onRespond(
+                                buildJsonObject {
+                                    put("action", "accept")
+                                    put("content", buildJsonObject { put("answer", value) })
+                                }
+                            )
+                        }) { Text(label) }
+                    }
+                }
+            }
+            TextButton(onClick = onDismiss) { Text("稍后再说") }
+        },
+    )
 }

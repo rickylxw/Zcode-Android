@@ -185,6 +185,34 @@ function previewInput(input) {
 }
 
 /**
+ * 流式 todo：取该会话最新的 TodoWrite 工具输入里的待办清单（rowid > afterRowid 的增量）。
+ * 返回 { todos: [{content,status}] | null, lastRowid }——todos 为 null 表示增量里没有
+ * 新的 TodoWrite，lastRowid 是已扫描到的水位（调用方下轮传入，避免每秒全量回扫）。
+ */
+export function getStreamingTodo(sessionId, afterRowid = 0) {
+  const maxRid = getDb()
+    .prepare('SELECT MAX(p.rowid) AS rid FROM part p JOIN message m ON p.message_id = m.id WHERE m.session_id = ?')
+    .get(sessionId)?.rid ?? 0;
+  if (maxRid <= afterRowid) return { todos: null, lastRowid: afterRowid };
+  const row = getDb()
+    .prepare(
+      `SELECT p.rowid AS rid, p.data FROM part p JOIN message m ON p.message_id = m.id
+       WHERE m.session_id = ? AND p.rowid > ? AND p.rowid <= ? AND p.data LIKE '%"tool":"TodoWrite"%'
+       ORDER BY p.rowid DESC LIMIT 1`
+    )
+    .get(sessionId, afterRowid, maxRid);
+  if (!row) return { todos: null, lastRowid: maxRid };
+  try {
+    const d = JSON.parse(row.data);
+    const todos = (d.state?.input?.todos ?? [])
+      .map((t) => ({ content: String(t.content ?? ''), status: String(t.status ?? 'pending') }));
+    return { todos, lastRowid: maxRid };
+  } catch {
+    return { todos: null, lastRowid: maxRid };
+  }
+}
+
+/**
  * 流式快照：取最新一条助手消息当前已生成的文本（文本块 + 思考块分开）。
  * 无头 CLI 流式写入 part 表，回合进行中轮询本函数即可得到渐增的文本。
  */

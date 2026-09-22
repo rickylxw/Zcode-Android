@@ -46,6 +46,12 @@ data class BlockDto(
 )
 
 @Serializable
+data class TodoItemDto(
+    val content: String,
+    val status: String = "pending",
+)
+
+@Serializable
 data class MessageDto(
     val id: String,
     val role: String,

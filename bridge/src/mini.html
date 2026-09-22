@@ -313,7 +313,7 @@ function render() {
   // 最近动态
   $('#feedEmpty').hidden = store_.feed.length > 0;
   $('#feed').innerHTML = store_.feed.slice(0, 12).map((f) =>
-    '<li><time>' + fmtClock(f.at) + '</time><span class="what">' + esc(f.label) + '</span></li>'
+    '<li><time>' + fmtClock(f.at) + '</time><span class="what">' + esc(f.label) + (f.count > 1 ? ' <b>×' + f.count + '</b>' : '') + '</span></li>'
   ).join('');
 
   const totalQueued = Object.values(st.queued).reduce((a, b) => a + b, 0);
@@ -354,7 +354,15 @@ function connect() {
       const key = m.jobId && !m.sessionId ? m.jobId : (m.sessionId ?? m.jobId);
       store_.events.set(key, m.event);
       const title = store_.status?.running.find((r) => (r.sessionId ?? r.jobId) === key)?.title || '任务';
-      store_.feed.unshift({ at: Date.now(), label: title + ' · ' + eventText(m.event) });
+      const label = title + ' · ' + eventText(m.event);
+      const prev = store_.feed[0];
+      // 同一会话同类事件 15s 内重复（连续同名工具/双通道）→ 合并为一行并计数
+      if (prev && prev.key === key && prev.label === label && Date.now() - prev.at < 15000) {
+        prev.count = (prev.count || 1) + 1;
+        prev.at = Date.now();
+      } else {
+        store_.feed.unshift({ at: Date.now(), key, label, count: 1 });
+      }
       store_.feed.length = Math.min(store_.feed.length, 40);
       render();
     } else if (m.type === 'stream') {
