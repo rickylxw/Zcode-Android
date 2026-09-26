@@ -210,6 +210,12 @@ session_updated ×2（开始+结束）、progress 全集（turn_started/model_re
 - **验证**（`bridge/test/approval-test.mjs`）：build 模式发起写文件任务 → 桥接转发权限请求 → 应答 allow_once → 工具真实执行 → 回合完成 → **PASS**。
 - 至此桌面端的工具审批与提问交互在手机端补齐；yolo 模式服务端不发起审批，行为不变。
 
+### 7.8 审批超时策略设置 + todo 流式 —— ✅ 已实现并验证（2026-09-26，0.4.20）
+
+- **审批超时策略可配置**：`GET/POST /api/settings`（`approvalTimeoutPolicy: allow|deny`），持久化到 bridge.config.json，所有设备共享；App 设置页新增「审批超时策略」面板（超时后放行 = 沿用 yolo 行为 / 超时后拒绝 = 更安全）。deny 时权限回退用 deny 选项的 response、提问回退 `{action:'decline'}`（wire schema 均合法）。
+- **todo 流式端到端验证 PASS**（`bridge/test/todo-stream-test.mjs`）：回合内 TodoWrite 创建三步清单 → 2 个 stream 帧携带 todos → 手机端 LiveTodoCard 实时渲染。
+- 连接排查记录：9/26 手机连不上时电脑端全绿（进程/端口/token/防火墙规则/IP 全部正常），根因在手机侧网络或 App 状态；手机浏览器访问 `/api/ping` 可一测定因。
+
 ### 运行标记幽灵修复（2026-09-22）
 
 看板「运行中的任务」出现早已结束却停不掉的任务：根因是测试/被强杀的进程来不及把 `turn.completed` 落入共享日志，启动回放（initialRunningSet）按「有 started 无 completed」把它们误判为运行中（旧窗口宽至 12 小时）。修复：

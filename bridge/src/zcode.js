@@ -42,6 +42,11 @@ export function pendingNewJobs() {
   return [...jobs.values()].filter((j) => j.sessionId === null);
 }
 
+/** 全部活跃 job（含已绑定会话的），供状态快照兜底（同 appserver.appServerAllTurns） */
+export function allJobs() {
+  return [...jobs.values()];
+}
+
 export function stopJob(jobId) {
   const job = jobs.get(jobId);
   if (!job) return false;

@@ -69,6 +69,15 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ summary: { today: { turns: 23, totalTokens: 1843200 }, last7Days: {}, allTime: {} }, daily: [] }));
   }
+  if (url.pathname === '/api/projects') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({
+      projects: [
+        { directory: 'E:\\Documents\\GitHub\\ZCode Android', sessionCount: 42, lastActive: Date.now() },
+        { directory: 'D:\\work\\demo-app', sessionCount: 7, lastActive: Date.now() - 3600_000 },
+      ],
+    }));
+  }
   if (url.pathname === '/api/sessions/sess_mockaaaa1111/stop') {
     console.log('[mock] 收到停止指令（忽略）');
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -108,6 +117,28 @@ wss.on('connection', (ws, req) => {
       watchers.add(ws);
       broadcast({ type: 'status', ...snapshot() });
       console.log('[mock] watcher 进入，开始灌数据');
+    } else if (m.type === 'prompt') {
+      // 模拟受理新任务：回执 + 1s 后作为新运行中会话出现
+      ws.send(JSON.stringify({ type: 'prompt_accepted', requestId: m.requestId, jobId: 'turn_mocknew001' }));
+      setTimeout(() => {
+        sessions.push({
+          sessionId: 'sess_mocknew' + String(sessions.length).padStart(4, '0'),
+          title: (m.prompt || '新任务').slice(0, 18),
+          directory: m.directory ?? 'E:\\mock\\new',
+          since: Date.now(),
+          mode: m.mode ?? 'yolo',
+          model: 'bigmodel/glm-5.3',
+          prompt: m.prompt ?? '',
+          queue: 0,
+          queueItems: [],
+          events: [{ kind: 'turn_started', toolName: null, durationMs: null, timestamp: new Date().toISOString() }],
+          stream: '',
+          tools: ['Read', 'Edit'],
+          ti: 0,
+        });
+        if (watchers.size) broadcast({ type: 'status', ...snapshot() });
+        console.log('[mock] 新任务已受理并进入运行列表:', m.prompt);
+      }, 1000);
     }
   });
   ws.on('close', () => watchers.delete(ws));

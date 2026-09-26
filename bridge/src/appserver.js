@@ -247,6 +247,11 @@ export function appServerPendingNewJobs() {
   return [...turns.values()].filter((t) => !t.sessionId);
 }
 
+/** 全部活跃回合（含已绑定会话的）：server.js 的状态快照用，运行标记丢失的任务也要可见 */
+export function appServerAllTurns() {
+  return [...turns.values()];
+}
+
 export function appServerStop(jobId) {
   const turn = turns.get(jobId);
   if (!turn?.sessionId) return false;
@@ -275,6 +280,11 @@ export function appServerYieldToForeignTurn(sessionId, logTurnId) {
   turn.yielded = true;
   console.log(`[appserver] 检测到外来回合（桌面端优先），中止本方回合: ${sessionId}`);
   call('session/stop', { sessionId }, 15000).catch(() => {});
+  // 让位后回合通常随 session/stop 结束；若 60s 仍不结算（事件丢失等）就强制回收，
+  // 否则 turn 对象滞留 turns 表，看板会一直显示一个不存在的「桥接任务」
+  setTimeout(() => {
+    if (!turn.settled) failTurn(turn, Object.assign(new Error('回合让位后未正常结束，已强制回收'), { code: 'YIELDED' }));
+  }, 60_000).unref?.();
   return true;
 }
 
@@ -301,10 +311,25 @@ function finishTurn(turn, result) {
 }
 
 function emitEvent(turn, event) {
+  turn.lastProgress = Date.now();
   try {
     turn.onEvent?.(turn.sessionId, event);
   } catch {}
 }
+
+// ---------- 僵尸回合自愈 ----------
+// 进程活着但 turn.completed 永远不来时（事件丢失、wire 卡死），turn 会滞留 turns 表：
+// 看板显示假任务、lockKey 永久占锁、队列投递被挡。按「最后进展时间」看门狗回收。
+const STALL_REAP_MS = 2 * 60 * 60 * 1000; // 有流式/事件就算进展；停滞超 2h 才回收，勿伤长任务
+setInterval(() => {
+  const now = Date.now();
+  for (const t of [...turns.values()]) {
+    if (now - t.lastProgress > STALL_REAP_MS) {
+      console.error(`[appserver] 回合 ${t.id} 停滞超 2h，强制回收 (sessionId=${t.sessionId ?? '未绑定'}, directory=${t.directory})`);
+      failTurn(t, Object.assign(new Error('回合长时间无进展，已被强制回收'), { code: 'STALLED' }));
+    }
+  }
+}, 60_000).unref?.();
 
 /**
  * 执行一个 app-server 回合，resolve 出 { sessionId, response, usage, projection }。
@@ -332,6 +357,7 @@ export function appServerTurn({ sessionId = null, directory, prompt, mode = 'yol
       model,
       prompt,
       startedAt: Date.now(),
+      lastProgress: Date.now(), // 看门狗用：事件/流式增量都会刷新
       settled: false,
       streamText: '',
       streamReasoning: '',
@@ -437,6 +463,7 @@ function dispatchEvent(msg) {
 
   if (ev.type === 'model.streaming') {
     const delta = ev.payload?.delta ?? '';
+    if (delta) turn.lastProgress = Date.now();
     if (ev.payload?.kind === 'reasoning_delta') turn.streamReasoning += delta;
     else if (ev.payload?.kind === 'text_delta') turn.streamText += delta;
   } else if (ev.type === 'turn.started') {

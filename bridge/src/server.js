@@ -10,7 +10,7 @@ import * as bqueue from './bqueue.js';
 import { initialRunningSet, LogTail } from './logtail.js';
 import { listModels } from './selection.js';
 import * as store from './store.js';
-import { getJob, pendingNewJobs, runTurn, runningJobForSession, stopJob } from './zcode.js';
+import { allJobs, getJob, pendingNewJobs, runTurn, runningJobForSession, stopJob } from './zcode.js';
 
 const bridgeRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BRIDGE_VERSION = '0.3.0';
@@ -182,7 +182,9 @@ function phoneCount() {
 
 function statusSnapshot() {
   const running = [];
+  const seenSessions = new Set();
   for (const [sid, ts] of runningSessions) {
+    seenSessions.add(sid);
     let s = null;
     try {
       s = store.getSession(sid);
@@ -201,6 +203,27 @@ function statusSnapshot() {
       since,
       events: recentEvents.get(sid) ?? [],
       queueItems: mergedQueue(sid).slice(0, 10).map((q) => ({ source: q.source, text: String(q.text).slice(0, 160) })),
+    });
+  }
+  // 有活跃 job 但运行标记丢失的会话（对账中间态/异常路径）也要在看板上可见、可停止
+  for (const job of ENGINE === 'appserver' ? appserver.appServerAllTurns() : allJobs()) {
+    if (!job.sessionId || seenSessions.has(job.sessionId)) continue;
+    seenSessions.add(job.sessionId);
+    let s = null;
+    try {
+      s = store.getSession(job.sessionId);
+    } catch {}
+    running.push({
+      sessionId: job.sessionId,
+      title: s?.title ?? null,
+      directory: s?.directory ?? job.directory ?? null,
+      jobId: job.id,
+      mode: job.mode ?? null,
+      model: job.model ?? null,
+      prompt: job.prompt ? String(job.prompt).slice(0, 200) : null,
+      since: job.startedAt,
+      events: recentEvents.get(job.sessionId) ?? [],
+      queueItems: mergedQueue(job.sessionId).slice(0, 10).map((q) => ({ source: q.source, text: String(q.text).slice(0, 160) })),
     });
   }
   for (const job of pendingJobs()) {

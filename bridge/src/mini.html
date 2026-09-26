@@ -56,7 +56,20 @@
   .chev { color: var(--faint); flex: none; margin-top: 2px; transition: transform .15s; }
   .card.open .chev { transform: rotate(90deg); }
   .card .row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
-  .elapsed { color: var(--accent); font-variant-numeric: tabular-nums; font-size: 12px; }
+  .since { color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .elapsed { color: var(--accent); font-variant-numeric: tabular-nums; font-size: 12px; white-space: nowrap; }
+  .hrow { display: flex; align-items: center; justify-content: space-between; margin: 14px 0 6px; }
+  .hrow h2 { margin: 0; }
+  button.mini { font-size: 11px; padding: 2px 10px; }
+  #newTask { display: none; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 11px; margin-bottom: 8px; }
+  #newTask.show { display: block; }
+  #newTask .frm-row { display: flex; gap: 8px; margin-bottom: 8px; }
+  #newTask input, #newTask select, #newTask textarea {
+    flex: 1; background: #12151d; border: 1px solid var(--line); border-radius: 8px;
+    color: var(--fg); font: inherit; font-size: 12px; padding: 6px 9px; outline: none; min-width: 0;
+  }
+  #newTask input:focus, #newTask textarea:focus, #newTask select:focus { border-color: var(--accent); }
+  #newTask textarea { resize: vertical; }
   .qbadge { color: var(--amber); font-size: 12px; }
   .event { color: var(--dim); font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .event .tool { color: var(--accent); }
@@ -103,7 +116,8 @@
   main > ul.feed { background: none; border: none; padding: 0; max-height: none; }
   main > ul.feed li:last-child { border-bottom: 1px dashed #2026344d; }
   .empty { color: var(--faint); text-align: center; padding: 18px 0 6px; user-select: none; }
-  footer { padding: 6px 12px 8px; color: var(--faint); font-size: 11px; border-top: 1px solid var(--line); user-select: none; }
+  footer { padding: 6px 12px 8px; color: var(--faint); font-size: 11px; border-top: 1px solid var(--line); user-select: none; display: flex; align-items: center; gap: 10px; }
+  footer #foot { flex: 1; }
   /* token 输入浮层 */
   #gate {
     position: fixed; inset: 0; background: #0f1115ee; display: none;
@@ -131,7 +145,20 @@
 </header>
 
 <main>
-  <h2>运行中的任务</h2>
+  <div class="hrow"><h2>运行中的任务</h2><button class="mini" id="newTaskBtn">＋ 新任务</button></div>
+  <div id="newTask">
+    <div class="frm-row"><input id="ntDir" list="ntProjects" placeholder="项目目录（如 E:\work\demo）" autocomplete="off"><datalist id="ntProjects"></datalist></div>
+    <div class="frm-row">
+      <select id="ntMode">
+        <option value="yolo">全自动（yolo）</option>
+        <option value="build">构建（build）</option>
+        <option value="edit">编辑（edit）</option>
+        <option value="plan">规划（plan）</option>
+      </select>
+    </div>
+    <div class="frm-row"><textarea id="ntPrompt" rows="2" placeholder="任务目标…"></textarea></div>
+    <div class="frm-row"><button id="ntSend" class="mini">发送任务</button></div>
+  </div>
   <div id="running"><div class="empty">加载中…</div></div>
 
   <h2>最近动态</h2>
@@ -139,7 +166,10 @@
   <div class="empty" id="feedEmpty" hidden>暂无动态</div>
 </main>
 
-<footer id="foot">等待桥接状态…</footer>
+<footer>
+  <button class="mini" id="notifyBtn" title="任务完成时弹系统通知">🔔 提醒：关</button>
+  <span id="foot">等待桥接状态…</span>
+</footer>
 
 <div id="gate">
   <div class="hint">未取得桥接 token。本机打开通常会自动获取；也可手动输入 bridge.config.json 里的 token，或用 <code>npm run mini</code> 启动：</div>
@@ -211,6 +241,15 @@ function fmtDur(ms) {
   return Math.floor(m / 60) + ' 时 ' + pad(m % 60) + ' 分';
 }
 function fmtClock(ts) { const d = new Date(ts); return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()); }
+function fmtStartClock(ts) { // 今天的任务只显示时刻，更早的带日期
+  const d = new Date(ts), now = new Date();
+  const hm = pad(d.getHours()) + ':' + pad(d.getMinutes());
+  if (d.toDateString() === now.toDateString()) return hm;
+  const yest = new Date(now);
+  yest.setDate(now.getDate() - 1);
+  if (d.toDateString() === yest.toDateString()) return '昨日 ' + hm;
+  return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + hm;
+}
 function fmtTokens(n) {
   if (n == null) return '—';
   if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
@@ -243,6 +282,11 @@ async function fetchUsage() { // 今日用量徽标
     const t = j.summary?.today;
     if (t) $('#usage').textContent = '今日 ' + t.turns + ' 回合 · ' + fmtTokens(t.totalTokens) + ' tokens';
   } catch {}
+}
+
+function feedPush(label) {
+  store_.feed.unshift({ at: Date.now(), label, count: 1 });
+  store_.feed.length = Math.min(store_.feed.length, 40);
 }
 
 // ---------- 渲染 ----------
@@ -300,6 +344,7 @@ function render() {
         '<div class="head"><div><div class="title">' + name + '</div>' +
         (dir ? '<div class="sub">📁 ' + dir + '</div>' : '') + '</div><span class="chev">▶</span></div>' +
         '<div class="row"><span class="spin"></span>' +
+        '<span class="since">' + fmtStartClock(r.since) + ' 起 ·</span>' +
         '<span class="elapsed" data-since="' + r.since + '">' + fmtDur(Date.now() - r.since) + '</span>' + evHtml + q +
         (r.sessionId
           ? '<button class="stop" data-stop-session="' + esc(r.sessionId) + '">停止</button>'
@@ -354,6 +399,7 @@ function connect() {
       const key = m.jobId && !m.sessionId ? m.jobId : (m.sessionId ?? m.jobId);
       store_.events.set(key, m.event);
       const title = store_.status?.running.find((r) => (r.sessionId ?? r.jobId) === key)?.title || '任务';
+      if (m.event.kind === 'turn_completed') notifyTurnDone(title, m.event.durationMs);
       const label = title + ' · ' + eventText(m.event);
       const prev = store_.feed[0];
       // 同一会话同类事件 15s 内重复（连续同名工具/双通道）→ 合并为一行并计数
@@ -364,6 +410,17 @@ function connect() {
         store_.feed.unshift({ at: Date.now(), key, label, count: 1 });
       }
       store_.feed.length = Math.min(store_.feed.length, 40);
+      render();
+    } else if (m.type === 'prompt_accepted') {
+      if (pendingPrompts.has(m.requestId)) {
+        const dir = pendingPrompts.get(m.requestId);
+        pendingPrompts.delete(m.requestId);
+        feedPush('任务已受理（' + baseName(dir) + '）');
+        render();
+      }
+    } else if (m.type === 'error' && pendingPrompts.has(m.requestId)) {
+      pendingPrompts.delete(m.requestId);
+      feedPush('任务被拒绝：' + (m.message ?? '未知错误'));
       render();
     } else if (m.type === 'stream') {
       const key = m.jobId && !m.sessionId ? m.jobId : m.sessionId;
@@ -383,8 +440,9 @@ function connect() {
   ws.onerror = () => ws.close();
 }
 
-// 卡片点击展开/收起（按钮不触发）
-document.addEventListener('click', (e) => {
+// 卡片展开/收起：用 pointerdown 而不是 click——整页重渲染可能发生在按下与抬起之间，
+// 把 click 连同旧节点一起吞掉；pointerdown 在按下瞬间就处理，不受重渲染影响
+document.addEventListener('pointerdown', (e) => {
   if (e.target.closest('button')) return;
   const card = e.target.closest('.card[data-key]');
   if (!card) return;
@@ -412,9 +470,63 @@ document.addEventListener('click', async (e) => {
   }
 });
 
+// ---------- 任务完成系统通知 ----------
+const notifyOn = () => localStorage.getItem('miniNotify') === '1';
+function setNotifyBtn() { $('#notifyBtn').textContent = '🔔 提醒：' + (notifyOn() ? '开' : '关'); }
+$('#notifyBtn').addEventListener('click', async () => {
+  if (notifyOn()) {
+    localStorage.setItem('miniNotify', '0');
+  } else {
+    if (!('Notification' in window)) { store_.feed.unshift({ at: Date.now(), label: '此环境不支持浏览器通知', count: 1 }); render(); return; }
+    let perm = Notification.permission;
+    if (perm === 'default') perm = await Notification.requestPermission();
+    if (perm !== 'granted') { store_.feed.unshift({ at: Date.now(), label: '浏览器通知权限被拒绝，无法开启提醒', count: 1 }); render(); return; }
+    localStorage.setItem('miniNotify', '1');
+    feedPush('完成提醒已开启');
+  }
+  setNotifyBtn();
+  render();
+});
+function notifyTurnDone(title, durMs) {
+  if (!notifyOn() || !('Notification' in window) || Notification.permission !== 'granted') return;
+  try {
+    const n = new Notification('✅ 任务完成：' + title, { body: '用时 ' + fmtDur(durMs || 0) + ' · ' + fmtClock(Date.now()), tag: 'zcode-mini-done', silent: false });
+    n.onclick = () => { window.focus(); n.close(); };
+  } catch {}
+}
+
+// ---------- 看板直接下发新任务 ----------
+const pendingPrompts = new Map(); // requestId -> directory（自己发出的 prompt，用于配对回执）
+$('#newTaskBtn').addEventListener('click', () => {
+  const f = $('#newTask');
+  f.classList.toggle('show');
+  if (f.classList.contains('show') && !$('#ntProjects').options.length) {
+    api('projects').then((j) => {
+      for (const p of j.projects ?? []) {
+        const o = document.createElement('option');
+        o.value = p.directory;
+        $('#ntProjects').appendChild(o);
+      }
+    }).catch(() => {});
+  }
+});
+$('#ntSend').addEventListener('click', () => {
+  const directory = $('#ntDir').value.trim();
+  const prompt = $('#ntPrompt').value.trim();
+  const mode = $('#ntMode').value;
+  if (!directory || !prompt) { feedPush('目录和任务描述都不能为空'); render(); return; }
+  const requestId = 'mini_' + Date.now();
+  pendingPrompts.set(requestId, directory);
+  store_.ws?.send(JSON.stringify({ type: 'prompt', requestId, sessionId: null, directory, prompt, mode }));
+  feedPush('已发送新任务 → ' + baseName(directory));
+  $('#ntPrompt').value = '';
+  render();
+});
+
 // ---------- 启动 ----------
 (async () => {
   store_.token = await resolveToken();
+  setNotifyBtn();
   if (!store_.token) askToken(); else connect();
   setInterval(fetchUsage, 5 * 60 * 1000);
 })();
