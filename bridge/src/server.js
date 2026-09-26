@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import * as appserver from './appserver.js';
-import { ensureCliConfig, lanAddresses, loadBridgeConfig, paths } from './config.js';
+import { ensureCliConfig, lanAddresses, loadBridgeConfig, paths, saveBridgeConfig } from './config.js';
 import * as archive from './archive.js';
 import * as bqueue from './bqueue.js';
 import { initialRunningSet, LogTail } from './logtail.js';
@@ -142,7 +142,8 @@ const sessionToJob = new Map(); // sessionId -> jobId（绑定后的路由表）
 const streamPumps = new Map(); // jobId -> 轮询定时器（泵自检 job 存活性，结束自动清除）
 
 // 交互请求转发（权限审批 / AskUserQuestion）：推给订阅该会话的手机端等真实应答；
-// 无人观看（订阅者为空）时 appserver 走默认策略（放行单次 / 采纳第一个选项）
+// 无人观看（订阅者为空）时 appserver 走默认策略（由设置里的审批超时策略决定）
+appserver.setApprovalFallbackPolicy(cfg.approvalTimeoutPolicy === 'deny' ? 'deny' : 'allow');
 appserver.setInteractionHandler((sessionId, req) => {
   const subs = sessionSubscribers.get(sessionId);
   if (!subs || subs.size === 0) return false;
@@ -456,6 +457,21 @@ async function handleApi(req, res, url) {
 
   if (url.pathname === '/api/usage' && req.method === 'GET') {
     return send(200, { summary: store.usageSummary(), daily: store.usageDaily(7) });
+  }
+
+  if (url.pathname === '/api/settings' && req.method === 'GET') {
+    return send(200, { approvalTimeoutPolicy: cfg.approvalTimeoutPolicy === 'deny' ? 'deny' : 'allow' });
+  }
+
+  if (url.pathname === '/api/settings' && req.method === 'POST') {
+    const body = await readBody(req);
+    const policy = body.approvalTimeoutPolicy === 'deny' ? 'deny' : 'allow';
+    cfg.approvalTimeoutPolicy = policy;
+    appserver.setApprovalFallbackPolicy(policy);
+    try {
+      saveBridgeConfig(bridgeRoot, cfg); // 持久化：重启后策略保留
+    } catch {}
+    return send(200, { ok: true, approvalTimeoutPolicy: policy });
   }
 
   if (url.pathname === '/api/sessions' && req.method === 'GET') {

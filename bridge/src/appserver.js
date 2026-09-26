@@ -134,12 +134,18 @@ function writeResponse(p, id, result) {
   } catch {}
 }
 
-/** 超时/无人观看时的默认策略：与无头 CLI 的 yolo 行为对齐（放行单次 / 采纳第一个选项） */
+/** 超时/无人观看时的默认策略（审批超时策略可在手机设置里改） */
 function interactionFallback(kind, params) {
+  const deny = approvalFallbackPolicy === 'deny';
   if (kind === 'permission') {
+    if (deny) {
+      const opt = (params?.options ?? []).find((o) => o.optionId === 'deny');
+      return opt?.response ?? { decision: 'deny', reason: '审批超时：按设置拒绝执行' };
+    }
     const opt = (params?.options ?? []).find((o) => o.optionId === 'allow_once') ?? (params?.options ?? [])[0];
     return opt?.response ?? { decision: 'allow', reason: 'Approved by bridge' };
   }
+  if (deny) return { action: 'decline' };
   const q = (params?.questions ?? [])[0];
   const pick = q?.options?.[0]?.value ?? q?.options?.[0]?.label ?? '继续';
   return { action: 'accept', content: { answer: pick } };
@@ -150,6 +156,13 @@ function interactionFallback(kind, params) {
 let interactionHandler = null; // (sessionId, req) => 是否有手机端在观看；server.js 注入
 const pendingInteractions = new Map(); // requestId -> { resolve, timer }
 const INTERACTION_TIMEOUT_MS = 120 * 1000;
+
+/** 审批超时策略：allow = 超时放行单次/采纳第一项（默认）；deny = 超时拒绝/不答 */
+let approvalFallbackPolicy = 'allow';
+
+export function setApprovalFallbackPolicy(policy) {
+  if (policy === 'allow' || policy === 'deny') approvalFallbackPolicy = policy;
+}
 
 /** server.js 注入转发函数：把请求推给订阅该会话的手机端，返回是否有观众 */
 export function setInteractionHandler(fn) {

@@ -98,6 +98,97 @@ private data class UsageUi(
     val error: String? = null,
 )
 
+/** 审批超时策略面板：电脑端请求审批 120 秒未应答时，放行还是拒绝（存于 bridge，所有设备共享） */
+@Composable
+private fun ApprovalPolicyPanel(container: com.zcode.mobile.AppContainer) {
+    val scope = rememberCoroutineScope()
+    var policy by remember { mutableStateOf("allow") }
+    var loading by remember { mutableStateOf(true) }
+    var saving by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) {
+        try {
+            policy = container.api.settings().approvalTimeoutPolicy
+        } catch (e: Exception) {
+            error = e.message ?: "读取失败"
+        } finally {
+            loading = false
+        }
+    }
+
+    fun choose(p: String) {
+        if (saving || p == policy) return
+        val prev = policy
+        policy = p
+        saving = true
+        scope.launch {
+            try {
+                container.api.saveSettings(p)
+                error = null
+            } catch (e: Exception) {
+                policy = prev
+                error = e.message ?: "保存失败"
+            } finally {
+                saving = false
+            }
+        }
+    }
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp)) {
+            Text("审批超时策略", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "电脑端请求审批（工具执行确认 / 提问）超过 120 秒未在手机上应答时：",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(6.dp))
+            if (loading) {
+                Text("读取中…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = !saving) { choose("allow") }
+                        .padding(vertical = 4.dp),
+                ) {
+                    androidx.compose.material3.RadioButton(selected = policy == "allow", onClick = { choose("allow") }, enabled = !saving)
+                    Spacer(Modifier.width(6.dp))
+                    Column {
+                        Text("超时后放行", style = MaterialTheme.typography.bodyMedium)
+                        Text("沿用 yolo 行为：自动允许工具执行、采纳第一个选项", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = !saving) { choose("deny") }
+                        .padding(vertical = 4.dp),
+                ) {
+                    androidx.compose.material3.RadioButton(selected = policy == "deny", onClick = { choose("deny") }, enabled = !saving)
+                    Spacer(Modifier.width(6.dp))
+                    Column {
+                        Text("超时后拒绝", style = MaterialTheme.typography.bodyMedium)
+                        Text("更安全：自动拒绝工具执行、不回答提问", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                if (saving) {
+                    Spacer(Modifier.height(4.dp))
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
+                error?.let {
+                    Spacer(Modifier.height(4.dp))
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+    }
+}
+
 /** Token 用量面板：今日 / 近7天 / 累计 + 近7天逐日明细 */
 @Composable
 private fun UsagePanel(container: com.zcode.mobile.AppContainer) {
@@ -434,6 +525,8 @@ fun SettingsScreen(onBack: () -> Unit, onOpenConnect: () -> Unit, onOpenRemote: 
                     )
                 }
             }
+
+            ApprovalPolicyPanel(container = container)
 
             Text("版本与更新", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
 

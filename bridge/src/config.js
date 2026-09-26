@@ -90,6 +90,13 @@ export function loadBridgeConfig(bridgeRoot) {
   return cfg;
 }
 
+/** 运行时可变设置（审批超时策略等）写回 bridge.config.json */
+export function saveBridgeConfig(bridgeRoot, cfg) {
+  const clean = { ...cfg };
+  if (process.env.BRIDGE_TOKEN) delete clean.token; // 环境变量覆盖的 token 不落盘
+  fs.writeFileSync(path.join(bridgeRoot, 'bridge.config.json'), JSON.stringify(clean, null, 2));
+}
+
 export function lanAddresses() {
   const out = [];
   for (const list of Object.values(os.networkInterfaces())) {

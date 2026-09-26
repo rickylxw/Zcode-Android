@@ -72,6 +72,19 @@ class BridgeApi(private val settings: SettingsRepo) {
         request<StopResp>(url, token, "POST", "/api/sessions/$id/stop", "{}")
     }
 
+    suspend fun settings(): SettingsDto {
+        val (url, token) = requireConfig()
+        return request(url, token, "GET", "/api/settings", null)
+    }
+
+    suspend fun saveSettings(approvalTimeoutPolicy: String): SettingsDto {
+        val (url, token) = requireConfig()
+        return request(
+            url, token, "POST", "/api/settings",
+            """{"approvalTimeoutPolicy":${JsonPrimitive(approvalTimeoutPolicy)}}""",
+        )
+    }
+
     suspend fun models(): ModelListDto {
         val (url, token) = requireConfig()
         return request(url, token, "GET", "/api/models", null)

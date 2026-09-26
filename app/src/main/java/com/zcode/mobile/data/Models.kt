@@ -52,6 +52,12 @@ data class TodoItemDto(
 )
 
 @Serializable
+data class SettingsDto(
+    // 审批超时策略：allow = 审批 120 秒未应答自动放行；deny = 自动拒绝/不答
+    val approvalTimeoutPolicy: String = "allow",
+)
+
+@Serializable
 data class MessageDto(
     val id: String,
     val role: String,
