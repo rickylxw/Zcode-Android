@@ -11,6 +11,7 @@ import { WebSocketServer } from 'ws';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const port = Number(process.argv[2]) || 8878;
 const TOKEN = 'mock';
+let frozen = false; // /mock/freeze 切换：冻结后不再灌事件，用于验证停滞提示
 const startedAt = Date.now();
 const MIN = 60_000;
 
@@ -25,8 +26,8 @@ const sessions = [
     prompt: 'ws-test 偶发重连风暴：close 事件里 setTimeout(connect) 没清旧定时器。请定位并修复，跑通测试。',
     queue: 2,
     queueItems: [
-      { source: 'phone', text: '顺便把退避上限从 10s 降到 5s' },
-      { source: 'desktop', text: '再补一个断线重连的单测' },
+      { id: 'bq_mock1', source: 'phone', text: '顺便把退避上限从 10s 降到 5s' },
+      { id: 'bq_mock2', source: 'phone', text: '再补一个断线重连的单测' },
     ],
     events: [],
     stream: '我先把 reconnect 的退避逻辑抽出来。当前问题是 close 事件里 setTimeout(connect) 没有清理旧的定时器，会导致重连风暴：\n\n',
@@ -66,8 +67,16 @@ const server = http.createServer((req, res) => {
     return res.end(JSON.stringify({ ok: true, token: TOKEN, port }));
   }
   if (url.pathname === '/api/usage') {
+    const day = 24 * 3600_000, base = 1_843_200;
+    const daily = [0.35, 0.6, 0.45, 0.9, 0.2, 0.7, 1].map((k, i) => ({
+      date: new Date(Date.now() - (6 - i) * day).toISOString().slice(0, 10),
+      turns: Math.round(23 * k),
+      inputTokens: Math.round(base * k * 0.8),
+      outputTokens: Math.round(base * k * 0.2),
+      totalTokens: Math.round(base * k),
+    }));
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ summary: { today: { turns: 23, totalTokens: 1843200 }, last7Days: {}, allTime: {} }, daily: [] }));
+    return res.end(JSON.stringify({ summary: { today: { turns: 23, totalTokens: base }, last7Days: {}, allTime: {} }, daily }));
   }
   if (url.pathname === '/api/projects') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -77,6 +86,52 @@ const server = http.createServer((req, res) => {
         { directory: 'D:\\work\\demo-app', sessionCount: 7, lastActive: Date.now() - 3600_000 },
       ],
     }));
+  }
+  // 队列操作（remove/clear/move）
+  const queueMatch = url.pathname.match(/^\/api\/sessions\/(sess_[\w-]+)\/queue$/);
+  if (queueMatch && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      const msg = JSON.parse(body || '{}');
+      const s = sessions.find((x) => x.sessionId === queueMatch[1]);
+      if (s && msg.action === 'remove') s.queueItems = s.queueItems.filter((q) => q.id !== msg.id);
+      if (s && msg.action === 'clear') s.queueItems = [];
+      if (s && msg.action === 'move') {
+        const i = s.queueItems.findIndex((q) => q.id === msg.id);
+        const j = msg.dir === 'up' ? i - 1 : i + 1;
+        if (i >= 0 && j >= 0 && j < s.queueItems.length) [s.queueItems[i], s.queueItems[j]] = [s.queueItems[j], s.queueItems[i]];
+      }
+      if (s) s.queue = s.queueItems.length;
+      if (watchers.size) broadcast({ type: 'status', ...snapshot() });
+      console.log('[mock] 队列操作:', msg.action, msg.id ?? '');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+    return;
+  }
+  // 演示触发器：完成一个任务 / 把任务事件做旧（停滞提示）
+  if (url.pathname === '/mock/complete' && sessions.length > 1) {
+    const s = sessions[1];
+    broadcast({ type: 'progress', sessionId: s.sessionId, jobId: null, event: { kind: 'turn_completed', toolName: null, durationMs: Date.now() - s.since, timestamp: new Date().toISOString() } });
+    sessions.splice(1, 1);
+    if (watchers.size) broadcast({ type: 'status', ...snapshot() });
+    console.log('[mock] 已完成任务:', s.title);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end('{"ok":true}');
+  }
+  if (url.pathname === '/mock/age') {
+    const s = sessions[0];
+    s.since -= 25 * 60_000; // 回合起点更早（停滞 = 起点早于最后事件）
+    for (const e of s.events) e.timestamp = new Date(Date.parse(e.timestamp) - 20 * 60_000).toISOString();
+    if (watchers.size) broadcast({ type: 'status', ...snapshot() });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end('{"ok":true}');
+  }
+  if (url.pathname === '/mock/freeze') { // 停止灌事件（验证看板的停滞提示）
+    frozen = !frozen;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end('{"ok":true,"frozen":' + frozen + '}');
   }
   if (url.pathname === '/api/sessions/sess_mockaaaa1111/stop') {
     console.log('[mock] 收到停止指令（忽略）');
@@ -146,8 +201,8 @@ wss.on('connection', (ws, req) => {
 
 const TOOL_KINDS = ['tool_started', 'tool_completed', 'model_request'];
 setInterval(() => {
-  if (!watchers.size) return;
-  const s = sessions[Math.random() < 0.7 ? 0 : 1];
+  if (!watchers.size || frozen) return;
+  const s = sessions[Math.random() < 0.7 ? 0 : sessions.length - 1];
   const kind = TOOL_KINDS[Math.floor(Math.random() * TOOL_KINDS.length)];
   const tool = s.tools[s.ti++ % s.tools.length];
   const event = { kind, toolName: kind === 'model_request' ? null : tool, durationMs: kind === 'tool_completed' ? 800 + Math.floor(Math.random() * 4000) : null, timestamp: new Date().toISOString() };

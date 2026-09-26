@@ -202,7 +202,7 @@ function statusSnapshot() {
       prompt: job?.prompt ? String(job.prompt).slice(0, 200) : null,
       since,
       events: recentEvents.get(sid) ?? [],
-      queueItems: mergedQueue(sid).slice(0, 10).map((q) => ({ source: q.source, text: String(q.text).slice(0, 160) })),
+      queueItems: mergedQueue(sid).slice(0, 10).map((q) => ({ id: q.id, source: q.source, text: String(q.text).slice(0, 160) })),
     });
   }
   // 有活跃 job 但运行标记丢失的会话（对账中间态/异常路径）也要在看板上可见、可停止
@@ -223,7 +223,7 @@ function statusSnapshot() {
       prompt: job.prompt ? String(job.prompt).slice(0, 200) : null,
       since: job.startedAt,
       events: recentEvents.get(job.sessionId) ?? [],
-      queueItems: mergedQueue(job.sessionId).slice(0, 10).map((q) => ({ source: q.source, text: String(q.text).slice(0, 160) })),
+      queueItems: mergedQueue(job.sessionId).slice(0, 10).map((q) => ({ id: q.id, source: q.source, text: String(q.text).slice(0, 160) })),
     });
   }
   for (const job of pendingJobs()) {

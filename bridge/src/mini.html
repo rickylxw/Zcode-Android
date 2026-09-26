@@ -44,7 +44,28 @@
     margin: 14px 0 6px; text-transform: uppercase;
   }
   h2:first-child { margin-top: 0; }
-  h3 { font-size: 11px; color: var(--faint); font-weight: 600; margin: 10px 0 4px; }
+  h3 { font-size: 11px; color: var(--faint); font-weight: 600; margin: 10px 0 4px; display: flex; align-items: center; justify-content: space-between; }
+  .h3btns { display: flex; gap: 4px; }
+  /* 停滞任务降权提示 */
+  .card.stale { opacity: .62; }
+  .stalehint { color: var(--amber); font-size: 12px; }
+  /* 队列条目操作 */
+  .qactions { display: flex; gap: 4px; flex: none; margin-left: auto; }
+  .qactions button { padding: 0 7px; font-size: 11px; }
+  /* 最近完成 */
+  .done-row { display: flex; align-items: center; gap: 8px; padding: 5px 2px; border-bottom: 1px dashed #2026344d; font-size: 12px; cursor: pointer; }
+  .done-row:last-child { border-bottom: none; }
+  .done-row .ok { color: var(--green); flex: none; }
+  .done-row .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); }
+  .done-row time { color: var(--faint); font-variant-numeric: tabular-nums; flex: none; }
+  .done-row .dur { color: var(--faint); flex: none; }
+  /* 近 7 天用量图 */
+  .chart { display: flex; gap: 6px; height: 84px; }
+  .chart .col { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .chart .bars { flex: 1; display: flex; align-items: flex-end; }
+  .chart .bar { width: 100%; background: #31405e; border-radius: 3px 3px 0 0; min-height: 2px; }
+  .chart .col.today .bar { background: var(--accent); }
+  .chart .lbl { text-align: center; color: var(--faint); font-size: 10px; white-space: nowrap; }
   .card {
     background: var(--card); border: 1px solid var(--line); border-radius: 10px;
     padding: 9px 11px; margin-bottom: 8px;
@@ -75,7 +96,7 @@
   .event .tool { color: var(--accent); }
   button {
     background: #232a3a; color: var(--fg); border: 1px solid #303850; border-radius: 7px;
-    font: inherit; font-size: 12px; padding: 3px 12px; cursor: pointer;
+    font: inherit; font-size: 12px; padding: 3px 12px; cursor: pointer; white-space: nowrap;
   }
   button:hover { background: #2b3448; }
   button.stop { border-color: #5c2f36; color: #ff9b9b; }
@@ -161,9 +182,17 @@
   </div>
   <div id="running"><div class="empty">加载中…</div></div>
 
+  <div id="doneSec" hidden>
+    <div class="hrow"><h2>最近完成</h2><button class="mini" id="doneClear">清空</button></div>
+    <div id="doneList"></div>
+  </div>
+
   <h2>最近动态</h2>
   <ul class="feed" id="feed"></ul>
   <div class="empty" id="feedEmpty" hidden>暂无动态</div>
+
+  <div class="hrow"><h2>近 7 天用量</h2></div>
+  <div class="chart" id="usageChart"></div>
 </main>
 
 <footer>
@@ -184,6 +213,8 @@ const store_ = {
   status: null,            // 最近一次 status 快照
   events: new Map(),       // 会话/任务 key -> 最新 progress 事件
   streams: new Map(),      // 会话/任务 key -> { text, reasoning }
+  titles: new Map(),       // 会话/任务 key -> 最近见过的标题（完成列表用）
+  done: [],                // 最近完成的回合（新的在前，看板内存态）
   feed: [],                // 最近动态（新的在前）
   open: new Set(),         // 展开详情的卡片 key
   token: null,
@@ -276,11 +307,13 @@ async function api(path, opts) {
   return res.json();
 }
 
-async function fetchUsage() { // 今日用量徽标
+async function fetchUsage() { // 今日用量徽标 + 7 天柱状图
   try {
     const j = await api('usage');
     const t = j.summary?.today;
     if (t) $('#usage').textContent = '今日 ' + t.turns + ' 回合 · ' + fmtTokens(t.totalTokens) + ' tokens';
+    store_.usageDaily = j.daily ?? [];
+    render();
   } catch {}
 }
 
@@ -302,7 +335,7 @@ function render() {
     ? '<span class="dot on"></span>手机在线' + (n > 1 ? ' ×' + n : '')
     : '<span class="dot off"></span>手机离线' + (st.phone.lastSeenAt ? ' · 最近 ' + fmtClock(st.phone.lastSeenAt).slice(0, 5) : '');
 
-  // 运行中任务卡片（点击标题区展开详情）
+  // 运行中任务卡片（点标题区展开详情）
   const run = $('#running');
   if (!st.running.length) {
     run.innerHTML = '<div class="empty">当前没有运行中的任务</div>';
@@ -311,20 +344,35 @@ function render() {
       const key = r.sessionId ?? r.jobId;
       const open = store_.open.has(key);
       const ev = store_.events.get(key);
-      const name = esc(r.title || '（新会话）');
+      const title = r.title || store_.titles.get(key) || '（新会话）';
+      store_.titles.set(key, title);
+      const name = esc(title);
       const dir = esc(baseName(r.directory));
       const qn = st.queued[r.sessionId] ?? (r.queueItems?.length ?? 0);
       const q = qn > 0 ? '<span class="qbadge">队列 ' + qn + ' 条</span>' : '';
       const evHtml = ev ? '· <span class="event">' + esc(eventText(ev)).replace(/(调用工具 [\w:.-]+)/, '<span class="tool">$1</span>') + '</span>' : '';
+      // 停滞检测：超过 10 分钟没有任何事件 → 降权显示（停止按钮此时兼有对账清理作用）
+      const evTs = (r.events ?? []).length ? Date.parse(r.events[r.events.length - 1].timestamp) : 0;
+      const lastAct = Math.max(evTs || 0, r.since);
+      const staleMin = Math.floor((Date.now() - lastAct) / 60000);
+      const stale = staleMin >= 10;
 
       // 详情区：模式/模型/ID 徽标、任务原文、待发送队列、事件时间线
       const badges = [MODE_NAME[r.mode], r.model, r.jobId ? 'job ' + r.jobId.slice(5, 15) : null, r.sessionId ? r.sessionId.slice(0, 18) : null]
         .filter(Boolean).map((b) => '<span class="badge">' + esc(b) + '</span>').join('');
       const promptHtml = r.prompt ? '<div class="prompt">' + esc(r.prompt) + '</div>' : '';
-      const qItems = (r.queueItems ?? []).map((qi) =>
-        '<li><span class="src">' + (qi.source === 'phone' ? '📱' : '🖥') + '</span><span class="what">' + esc(qi.text) + '</span></li>'
-      ).join('');
-      const qHtml = qItems ? '<h3>待发送队列（' + r.queueItems.length + '）</h3><ul class="feed">' + qItems + '</ul>' : '';
+      const qItems = (r.queueItems ?? []).map((qi) => {
+        const acts = (qi.id && qi.source === 'phone'
+          ? '<button data-qact="move" data-sid="' + esc(r.sessionId) + '" data-qid="' + esc(qi.id) + '" data-dir="up">↑</button>' +
+            '<button data-qact="move" data-sid="' + esc(r.sessionId) + '" data-qid="' + esc(qi.id) + '" data-dir="down">↓</button>'
+          : '') +
+          (qi.id ? '<button data-qact="remove" data-sid="' + esc(r.sessionId) + '" data-qid="' + esc(qi.id) + '">✕</button>' : '');
+        return '<li><span class="src">' + (qi.source === 'phone' ? '📱' : '🖥') + '</span><span class="what">' + esc(qi.text) + '</span>' +
+          (acts ? '<span class="qactions">' + acts + '</span>' : '') + '</li>';
+      }).join('');
+      const qHtml = qItems
+        ? '<h3>待发送队列（' + r.queueItems.length + '）<span class="h3btns"><button class="mini" data-qact="clear" data-sid="' + esc(r.sessionId) + '">清空</button></span></h3><ul class="feed">' + qItems + '</ul>'
+        : '';
       const timeline = (r.events ?? []).map((e) => {
         const ts = e.timestamp ? fmtClock(Date.parse(e.timestamp)) : '';
         return '<li><time>' + ts + '</time><span class="what">' + esc(eventText(e)) + '</span></li>';
@@ -340,12 +388,13 @@ function render() {
           : '<span class="think">' + esc((stream.reasoning || '').slice(-cap)) + '</span>') + '</pre>';
       }
 
-      return '<div class="card' + (open ? ' open' : '') + '" data-key="' + esc(key) + '">' +
+      return '<div class="card' + (open ? ' open' : '') + (stale ? ' stale' : '') + '" data-key="' + esc(key) + '">' +
         '<div class="head"><div><div class="title">' + name + '</div>' +
         (dir ? '<div class="sub">📁 ' + dir + '</div>' : '') + '</div><span class="chev">▶</span></div>' +
         '<div class="row"><span class="spin"></span>' +
         '<span class="since">' + fmtStartClock(r.since) + ' 起 ·</span>' +
         '<span class="elapsed" data-since="' + r.since + '">' + fmtDur(Date.now() - r.since) + '</span>' + evHtml + q +
+        (stale ? '<span class="stalehint">⚠ ' + staleMin + ' 分钟无活动</span>' : '') +
         (r.sessionId
           ? '<button class="stop" data-stop-session="' + esc(r.sessionId) + '">停止</button>'
           : '<button class="stop" data-stop-job="' + esc(r.jobId) + '">停止</button>') +
@@ -354,6 +403,30 @@ function render() {
         (open ? '' : streamHtml) + '</div>';
     }).join('');
   }
+
+  // 最近完成（点行可展开当时的回复尾部）
+  const doneSec = $('#doneSec'), doneList = $('#doneList');
+  doneSec.hidden = store_.done.length === 0;
+  doneList.innerHTML = store_.done.map((d) => {
+    const open = store_.open.has('done:' + d.key);
+    const stream = store_.streams.get(d.key);
+    const tail = open && stream ? '<pre class="stream">' + esc((stream.text || stream.reasoning || '').slice(-2000)) + '</pre>' : '';
+    return '<div class="done-card"><div class="done-row" data-done="' + esc(d.key) + '">' +
+      '<span class="ok">✓</span><span class="t">' + esc(d.title) + '</span>' +
+      '<span class="dur">用时 ' + fmtDur(d.dur) + '</span><time>' + fmtClock(d.at) + '</time></div>' + tail + '</div>';
+  }).join('');
+
+  // 近 7 天用量柱状图
+  const DAY_LBL = ['日', '一', '二', '三', '四', '五', '六'];
+  $('#usageChart').innerHTML = (store_.usageDaily ?? []).map((d, i) => {
+    const max = Math.max(...(store_.usageDaily ?? []).map((x) => x.totalTokens), 1);
+    const h = Math.max(3, Math.round((d.totalTokens / max) * 100));
+    const dt = new Date(d.date + 'T00:00:00');
+    const lbl = i === (store_.usageDaily.length - 1) ? '今天' : DAY_LBL[dt.getDay()];
+    return '<div class="col' + (i === store_.usageDaily.length - 1 ? ' today' : '') + '" title="' + esc(d.date) + '：' + d.turns + ' 回合 · ' + fmtTokens(d.totalTokens) + ' tokens">' +
+      '<div class="bars"><div class="bar" style="height:' + h + '%"></div></div>' +
+      '<div class="lbl">' + lbl + '</div></div>';
+  }).join('');
 
   // 最近动态
   $('#feedEmpty').hidden = store_.feed.length > 0;
@@ -398,8 +471,13 @@ function connect() {
     } else if (m.type === 'progress') {
       const key = m.jobId && !m.sessionId ? m.jobId : (m.sessionId ?? m.jobId);
       store_.events.set(key, m.event);
-      const title = store_.status?.running.find((r) => (r.sessionId ?? r.jobId) === key)?.title || '任务';
-      if (m.event.kind === 'turn_completed') notifyTurnDone(title, m.event.durationMs);
+      const title = store_.titles.get(key) || store_.status?.running.find((r) => (r.sessionId ?? r.jobId) === key)?.title || '任务';
+      store_.titles.set(key, title);
+      if (m.event.kind === 'turn_completed') {
+        notifyTurnDone(title, m.event.durationMs);
+        store_.done.unshift({ key, title, dur: m.event.durationMs ?? 0, at: Date.now() });
+        store_.done.length = Math.min(store_.done.length, 8);
+      }
       const label = title + ' · ' + eventText(m.event);
       const prev = store_.feed[0];
       // 同一会话同类事件 15s 内重复（连续同名工具/双通道）→ 合并为一行并计数
@@ -521,6 +599,34 @@ $('#ntSend').addEventListener('click', () => {
   feedPush('已发送新任务 → ' + baseName(directory));
   $('#ntPrompt').value = '';
   render();
+});
+
+// ---------- 队列管理 / 最近完成行展开 ----------
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-qact]');
+  if (b) {
+    const { qact, sid, qid, dir } = b.dataset;
+    b.disabled = true;
+    try {
+      const body = qact === 'clear' ? { action: 'clear' } : qact === 'remove' ? { action: 'remove', id: qid } : { action: 'move', id: qid, dir };
+      const r = await api('sessions/' + sid + '/queue', { method: 'POST', body: JSON.stringify(body) });
+      if (!r.ok) feedPush('队列操作失败：' + (r.error || '未知错误'));
+      // 成功后桥接会自动推送新 status，无需手动刷新
+    } catch {} finally { b.disabled = false; }
+    return;
+  }
+  const row = e.target.closest('[data-done]');
+  if (row) {
+    const key = row.dataset.done;
+    if (store_.open.has('done:' + key)) store_.open.delete('done:' + key);
+    else store_.open.add('done:' + key);
+    render();
+    return;
+  }
+  if (e.target.closest('#doneClear')) {
+    store_.done = [];
+    render();
+  }
 });
 
 // ---------- 启动 ----------

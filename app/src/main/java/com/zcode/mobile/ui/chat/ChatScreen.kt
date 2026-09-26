@@ -527,14 +527,42 @@ fun ApprovalDialog(
                     req.reason?.let {
                         Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    req.input?.toString()?.let {
-                        Text(
-                            it,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 4,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                    // 入参按工具类型渲染：文件/命令一目了然，其余工具回退紧凑 JSON
+                    val input = req.input
+                    if (input != null) {
+                        fun field(k: String) = (input[k] as? JsonPrimitive)?.content
+                        val lines = when (req.toolName) {
+                            "Write", "Edit", "Read" -> buildList {
+                                field("file_path")?.let { add("📄 $it") }
+                                field("old_string")?.let { add("旧：${it.take(80)}") }
+                                field("new_string")?.let { add("新：${it.take(80)}") }
+                                field("content")?.let { add("内容：${it.take(80)}") }
+                            }
+                            "Bash" -> buildList {
+                                field("command")?.let { add("$ " + it.take(120)) }
+                                field("description")?.let { add(it) }
+                            }
+                            else -> emptyList()
+                        }
+                        if (lines.isNotEmpty()) {
+                            lines.forEach {
+                                Text(
+                                    it,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        } else {
+                            Text(
+                                input.toString(),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 4,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                     }
                 } else {
                     val q = (req.questions?.firstOrNull() as? JsonObject)
