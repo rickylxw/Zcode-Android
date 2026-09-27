@@ -98,6 +98,18 @@ data class UsageBucket(
     val cacheWriteTokens: Long = 0,
     val totalTokens: Long = 0,
     val durationMs: Long = 0,
+    // 按模型分桶（分模型计价用；旧版 bridge 无此字段）
+    val byModel: List<ModelUsageDto> = emptyList(),
+)
+
+@Serializable
+data class ModelUsageDto(
+    val modelId: String,
+    val turns: Int = 0,
+    val inputTokens: Long = 0,
+    val outputTokens: Long = 0,
+    val cacheReadTokens: Long = 0,
+    val cacheWriteTokens: Long = 0,
 )
 
 @Serializable

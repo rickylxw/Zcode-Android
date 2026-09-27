@@ -259,6 +259,23 @@ function broadcastStatus() {
   }
 }
 
+// 回合结束后从 model_usage 回查按模型用量推给看板（运行时落库略有延迟，查不到就再补一次）
+function scheduleTurnDone(sessionId) {
+  const attempt = (delay) => setTimeout(() => {
+    let usage = null;
+    try {
+      usage = store.lastTurnModelUsage(sessionId);
+    } catch {}
+    if (!usage) {
+      if (delay < 6000) attempt(delay + 3500);
+      return;
+    }
+    const msg = JSON.stringify({ type: 'turn_done', sessionId, usage });
+    for (const ws of watchers) if (ws.readyState === ws.OPEN) ws.send(msg);
+  }, delay);
+  attempt(2500);
+}
+
 function progressTargets(sessionId, jobId) {
   const targets = new Set(watchers);
   for (const ws of sessionSubscribers.get(sessionId) ?? []) targets.add(ws);
@@ -286,6 +303,7 @@ function onLogEvent(sessionId, event) {
     runningSessions.delete(sessionId);
     turnStarts.delete(sessionId);
     stopPassivePump(sessionId);
+    scheduleTurnDone(sessionId);
     // 关键同步点：回合结束必须广播，否则正在看该会话的手机端不知道要拉取新消息
     broadcast({ type: 'session_updated', sessionId });
     broadcastStatus();
@@ -325,6 +343,7 @@ function onAppServerEvent(sessionId, event) {
   if (event.kind === 'turn_completed') {
     runningSessions.delete(sessionId);
     turnStarts.delete(sessionId);
+    scheduleTurnDone(sessionId);
     broadcast({ type: 'session_updated', sessionId }); // 非发起端的观看者拉取最终消息
     broadcastStatus();
     setTimeout(() => tryDeliverQueued().catch(() => {}), 3000);
@@ -714,6 +733,7 @@ function handleWsMessage(ws, raw) {
             sessionId: result.sessionId,
             response: result.response,
             usage: result.usage,
+            model: result.model ?? null,
             projection: result.projection,
           })
         );

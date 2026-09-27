@@ -215,11 +215,12 @@
   <div class="hrow"><h2>近 7 天用量</h2><span class="badge" id="weekCost">—</span><button class="mini" id="priceBtn" title="单价设置（¥/百万 tokens）">⚙ 单价</button></div>
   <div id="priceCfg">
     <div class="frm-row">
-      <label>输入</label><input id="pcIn" type="number" min="0" step="0.1">
-      <label>缓存命中</label><input id="pcCache" type="number" min="0" step="0.1">
-      <label>输出</label><input id="pcOut" type="number" min="0" step="0.1">
+      <label>输入</label><input id="pcIn" type="number" min="0" step="0.1" placeholder="自动">
+      <label>缓存命中</label><input id="pcCache" type="number" min="0" step="0.1" placeholder="自动">
+      <label>输出</label><input id="pcOut" type="number" min="0" step="0.1" placeholder="自动">
+      <button class="mini" id="pcAuto">恢复自动</button>
     </div>
-    <div class="frm-row"><span class="hint-line">单价单位 ¥/百万 tokens，默认按 GLM 旗舰牌价口径（8 / 2 / 28）估算；推理 tokens 按输出价计。请按 open.bigmodel.cn 你的实际牌价或资源包口径修改，即时生效并记住。</span></div>
+    <div class="frm-row"><span class="hint-line">单价单位 ¥/百万 tokens。默认按模型自动匹配牌价（GLM-5.3-Flash 0.8/0.23/2.8，旗舰 20/2/100），推理 tokens 按输出价计；手动填写则全局覆盖。请以 open.bigmodel.cn 实际口径为准，设置即时生效并记住。</span></div>
   </div>
   <div class="chart" id="usageChart"></div>
 </main>
@@ -318,26 +319,47 @@ function fmtTokens(n) {
   if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
   return String(n);
 }
-// ---------- 金额估算（单价 ¥/百万 tokens，「⚙ 单价」里可改，localStorage 记住）----------
-// 口径（已用真实 turn_usage 数据核对）：input_tokens 包含缓存命中 → 缓存部分按缓存价，
+// ---------- 金额估算（¥/百万 tokens）----------
+// 优先级：⚙ 手动单价（localStorage，全局覆盖）> 已知模型牌价表 > Flash 兜底。
+// 口径（已用真实 turn_usage 数据核对）：input_tokens 包含缓存命中 → 缓存按缓存价、
 // 其余按输入价；推理 tokens 按输出价。
-function priceCfg() {
-  const g = (k, d) => {
-    const v = parseFloat(localStorage.getItem(k));
-    return Number.isFinite(v) && v >= 0 ? v : d;
-  };
-  return { in: g('miniPriceIn', 8), out: g('miniPriceOut', 28), cache: g('miniPriceCache', 2) };
+const MODEL_PRICES = [
+  { re: /flash/i, p: { in: 0.8, cache: 0.23, out: 2.8 } },
+  { re: /glm-?5\.?3/i, p: { in: 20, cache: 2, out: 100 } },
+];
+function manualPrice() {
+  const i = localStorage.getItem('miniPriceIn'), c = localStorage.getItem('miniPriceCache'), o = localStorage.getItem('miniPriceOut');
+  if (i == null && c == null && o == null) return null;
+  const g = (v, d) => { const n = parseFloat(v); return Number.isFinite(n) && n >= 0 ? n : d; };
+  return { in: g(i, 0.8), cache: g(c, 0.23), out: g(o, 2.8) };
 }
-function costYuan(u) {
-  if (!u) return 0;
-  const p = priceCfg();
+function priceFor(model) {
+  return manualPrice() || (MODEL_PRICES.find((t) => t.re.test(model ?? '')) || {}).p || { in: 0.8, cache: 0.23, out: 2.8 };
+}
+function costOfModel(model, u) {
+  const p = priceFor(model);
   const cacheRead = Math.min(u.cacheReadTokens ?? 0, u.inputTokens ?? 0);
   const cacheWrite = u.cacheWriteTokens ?? 0;
   const plainIn = Math.max(0, (u.inputTokens ?? 0) - cacheRead - cacheWrite);
   return (plainIn * p.in + cacheWrite * p.in + cacheRead * p.cache +
     ((u.outputTokens ?? 0) + (u.reasoningTokens ?? 0)) * p.out) / 1e6;
 }
+function costYuan(u) {
+  if (!u) return 0;
+  if (u.models) return u.models.reduce((a, m) => a + costOfModel(m.model, m), 0);
+  return costOfModel(null, u);
+}
 function fmtYuan(v) { return '¥' + (v >= 100 ? v.toFixed(0) : v >= 1 ? v.toFixed(1) : v.toFixed(2)); }
+function doneUsageText(u) { // 「模型 · tokens · 金额」一行摘要（多模型取用量最大的为主模型）
+  const total = u.models.reduce((a, m) => a + m.totalTokens, 0);
+  const cost = u.models.reduce((a, m) => a + costOfModel(m.model, m), 0);
+  return (u.models[0]?.model || '') + ' · ' + fmtTokens(total) + ' tok · ≈' + fmtYuan(cost);
+}
+function usageBreakdown(u) {
+  return u.models.map((m) => m.model + '（' + m.requests + ' 次请求）：共 ' + fmtTokens(m.totalTokens) +
+    ' tok · 输入 ' + fmtTokens(m.inputTokens) + '（缓存命中 ' + fmtTokens(m.cacheReadTokens) + '）· 输出 ' +
+    fmtTokens(m.outputTokens + m.reasoningTokens) + ' · ≈' + fmtYuan(costOfModel(m.model, m)));
+}
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function baseName(p) { return p ? String(p).replace(/[\\/]+$/, '').split(/[\\/]/).pop() : ''; }
 const MODE_NAME = { plan: '规划', build: '构建', edit: '编辑', yolo: '全自动' };
@@ -464,16 +486,20 @@ function render() {
     }).join('');
   }
 
-  // 最近完成（点行可展开当时的回复尾部）
+  // 最近完成（点行可展开当时的回复尾部与用量明细）
   const doneSec = $('#doneSec'), doneList = $('#doneList');
   doneSec.hidden = store_.done.length === 0;
   doneList.innerHTML = store_.done.map((d) => {
     const open = store_.open.has('done:' + d.key);
     const stream = store_.streams.get(d.key);
     const tail = open && stream ? '<pre class="stream">' + esc((stream.text || stream.reasoning || '').slice(-2000)) + '</pre>' : '';
+    const usage = d.usage ? doneUsageText(d.usage) : '';
+    const detail = open && d.usage ? '<div class="prompt">' + esc(usageBreakdown(d.usage)) + '</div>' : '';
     return '<div class="done-card"><div class="done-row" data-done="' + esc(d.key) + '">' +
       '<span class="ok">✓</span><span class="t">' + esc(d.title) + '</span>' +
-      '<span class="dur">用时 ' + fmtDur(d.dur) + '</span><time>' + fmtClock(d.at) + '</time></div>' + tail + '</div>';
+      (usage ? '<span class="dur">' + esc(usage) + '</span>' : '') +
+      '<span class="dur">用时 ' + fmtDur(d.dur) + '</span><time>' + fmtClock(d.at) + '</time></div>' +
+      (open && d.usage ? detail : '') + tail + '</div>';
   }).join('');
 
   // 近 7 天用量柱状图（tooltip 带当日估算金额）
@@ -549,6 +575,18 @@ function connect() {
         store_.feed.unshift({ at: Date.now(), key, label, count: 1 });
       }
       store_.feed.length = Math.min(store_.feed.length, 40);
+      render();
+    } else if (m.type === 'turn_done') {
+      // 桥接在回合结束后从 model_usage 回查的按模型用量 → 补进「最近完成」
+      const entry = store_.done.find((x) => x.key === m.sessionId && !x.usage) ||
+                    store_.done.find((x) => x.key === m.sessionId);
+      if (entry) {
+        entry.usage = m.usage;
+        if (!entry.dur && m.usage?.models?.[0]?.durationMs) entry.dur = m.usage.models[0].durationMs;
+      } else {
+        store_.done.unshift({ key: m.sessionId, title: store_.titles.get(m.sessionId) || '任务', dur: m.usage?.models?.[0]?.durationMs ?? 0, at: Date.now(), usage: m.usage });
+        store_.done.length = Math.min(store_.done.length, 8);
+      }
       render();
     } else if (m.type === 'prompt_accepted') {
       if (pendingPrompts.has(m.requestId)) {
@@ -754,18 +792,32 @@ document.addEventListener('click', async (e) => {
 
 // ---------- 单价设置 ----------
 $('#priceBtn').addEventListener('click', () => $('#priceCfg').classList.toggle('show'));
-for (const [id, key, def] of [['pcIn', 'in', 8], ['pcCache', 'cache', 2], ['pcOut', 'out', 28]]) {
-  const el = document.getElementById(id);
-  el.value = priceCfg()[key];
-  el.addEventListener('input', () => {
-    const v = parseFloat(el.value);
+const PRICE_FIELDS = [['pcIn', 'miniPriceIn'], ['pcCache', 'miniPriceCache'], ['pcOut', 'miniPriceOut']];
+function refreshPriceInputs() {
+  const m = manualPrice();
+  for (const [id] of PRICE_FIELDS) {
+    const el = document.getElementById(id);
+    el.value = m ? m[{ pcIn: 'in', pcCache: 'cache', pcOut: 'out' }[id]] : '';
+  }
+}
+refreshPriceInputs();
+for (const [id, lsKey] of PRICE_FIELDS) {
+  document.getElementById(id).addEventListener('input', (e) => {
+    const v = parseFloat(e.target.value);
     if (!Number.isFinite(v) || v < 0) return;
-    localStorage.setItem('miniPrice' + (key === 'in' ? 'In' : key === 'out' ? 'Out' : 'Cache'), String(v));
+    localStorage.setItem(lsKey, String(v));
     store_.usageWeekCost = (store_.usageDaily ?? []).reduce((a, d) => a + costYuan(d), 0);
     renderUsageBadges();
     render();
   });
 }
+$('#pcAuto').addEventListener('click', () => {
+  for (const [, lsKey] of PRICE_FIELDS) localStorage.removeItem(lsKey);
+  refreshPriceInputs();
+  store_.usageWeekCost = (store_.usageDaily ?? []).reduce((a, d) => a + costYuan(d), 0);
+  renderUsageBadges();
+  render();
+});
 
 // ---------- 启动 ----------
 (async () => {
