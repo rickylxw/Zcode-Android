@@ -1,0 +1,14 @@
+{
+  "name": "zcode-mini-tray",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ZCode mini 看板的系统托盘壳（Tauri 2）：托盘图标 + 置顶小窗口，页面本体由桥接 /mini 提供",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build --no-bundle",
+    "build:debug": "tauri build --no-bundle --debug"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

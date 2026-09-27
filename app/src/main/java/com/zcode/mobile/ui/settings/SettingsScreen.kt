@@ -273,6 +273,18 @@ private fun UsageCell(title: String, b: com.zcode.mobile.data.UsageBucket, modif
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        // 预估费用：按 GLM-5.3 牌价估算（价格表见 data/TokenPricing.kt）
+        val cny = com.zcode.mobile.data.TokenPricing.costCny(
+            modelId = "GLM-5.3",
+            inputTokens = b.inputTokens,
+            outputTokens = b.outputTokens,
+            cacheReadTokens = b.cacheReadTokens,
+        )
+        Text(
+            com.zcode.mobile.data.TokenPricing.fmtCny(cny),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+        )
         if (b.durationMs > 0) {
             Text(
                 com.zcode.mobile.ui.common.fmtDuration(b.durationMs),

@@ -31,3 +31,8 @@ bridge/qd.txt
 .webtest/
 bridge/test/out/
 .probe/
+
+# 托盘壳（Tauri）
+bridge/tray/node_modules/
+bridge/tray/src-tauri/target/
+bridge/tray/*.exe

@@ -66,6 +66,27 @@
   .chart .bar { width: 100%; background: #31405e; border-radius: 3px 3px 0 0; min-height: 2px; }
   .chart .col.today .bar { background: var(--accent); }
   .chart .lbl { text-align: center; color: var(--faint); font-size: 10px; white-space: nowrap; }
+  /* 单价设置 */
+  #priceCfg { display: none; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 11px; margin-bottom: 8px; }
+  #priceCfg.show { display: block; }
+  #priceCfg .frm-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+  #priceCfg label { color: var(--dim); font-size: 12px; flex: none; }
+  #priceCfg input {
+    width: 72px; flex: none; background: #12151d; border: 1px solid var(--line); border-radius: 8px;
+    color: var(--fg); font: inherit; font-size: 12px; padding: 5px 8px; outline: none;
+  }
+  #priceCfg input:focus { border-color: var(--accent); }
+  #priceCfg .hint-line { color: var(--faint); font-size: 11px; line-height: 1.5; }
+  /* 完成提醒横幅（无系统通知能力时的页面内兜底） */
+  #toasts { position: fixed; top: 10px; right: 10px; z-index: 20; display: flex; flex-direction: column; gap: 8px; max-width: 340px; }
+  .toast {
+    background: #1d2735; border: 1px solid var(--accent); border-radius: 10px;
+    padding: 9px 12px; box-shadow: 0 6px 18px #0009; cursor: pointer;
+    animation: toastIn .2s ease-out;
+  }
+  .toast .t { font-weight: 600; font-size: 13px; margin-bottom: 2px; }
+  .toast .b { color: var(--dim); font-size: 12px; }
+  @keyframes toastIn { from { transform: translateX(20px); opacity: 0; } to { transform: none; opacity: 1; } }
   .card {
     background: var(--card); border: 1px solid var(--line); border-radius: 10px;
     padding: 9px 11px; margin-bottom: 8px;
@@ -191,7 +212,15 @@
   <ul class="feed" id="feed"></ul>
   <div class="empty" id="feedEmpty" hidden>暂无动态</div>
 
-  <div class="hrow"><h2>近 7 天用量</h2></div>
+  <div class="hrow"><h2>近 7 天用量</h2><span class="badge" id="weekCost">—</span><button class="mini" id="priceBtn" title="单价设置（¥/百万 tokens）">⚙ 单价</button></div>
+  <div id="priceCfg">
+    <div class="frm-row">
+      <label>输入</label><input id="pcIn" type="number" min="0" step="0.1">
+      <label>缓存命中</label><input id="pcCache" type="number" min="0" step="0.1">
+      <label>输出</label><input id="pcOut" type="number" min="0" step="0.1">
+    </div>
+    <div class="frm-row"><span class="hint-line">单价单位 ¥/百万 tokens，默认按 GLM 旗舰牌价口径（8 / 2 / 28）估算；推理 tokens 按输出价计。请按 open.bigmodel.cn 你的实际牌价或资源包口径修改，即时生效并记住。</span></div>
+  </div>
   <div class="chart" id="usageChart"></div>
 </main>
 
@@ -205,6 +234,8 @@
   <input id="tokenInput" placeholder="配对 token" autocomplete="off">
   <button id="tokenGo">连接</button>
 </div>
+
+<div id="toasts"></div>
 
 <script>
 'use strict';
@@ -287,6 +318,26 @@ function fmtTokens(n) {
   if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
   return String(n);
 }
+// ---------- 金额估算（单价 ¥/百万 tokens，「⚙ 单价」里可改，localStorage 记住）----------
+// 口径（已用真实 turn_usage 数据核对）：input_tokens 包含缓存命中 → 缓存部分按缓存价，
+// 其余按输入价；推理 tokens 按输出价。
+function priceCfg() {
+  const g = (k, d) => {
+    const v = parseFloat(localStorage.getItem(k));
+    return Number.isFinite(v) && v >= 0 ? v : d;
+  };
+  return { in: g('miniPriceIn', 8), out: g('miniPriceOut', 28), cache: g('miniPriceCache', 2) };
+}
+function costYuan(u) {
+  if (!u) return 0;
+  const p = priceCfg();
+  const cacheRead = Math.min(u.cacheReadTokens ?? 0, u.inputTokens ?? 0);
+  const cacheWrite = u.cacheWriteTokens ?? 0;
+  const plainIn = Math.max(0, (u.inputTokens ?? 0) - cacheRead - cacheWrite);
+  return (plainIn * p.in + cacheWrite * p.in + cacheRead * p.cache +
+    ((u.outputTokens ?? 0) + (u.reasoningTokens ?? 0)) * p.out) / 1e6;
+}
+function fmtYuan(v) { return '¥' + (v >= 100 ? v.toFixed(0) : v >= 1 ? v.toFixed(1) : v.toFixed(2)); }
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function baseName(p) { return p ? String(p).replace(/[\\/]+$/, '').split(/[\\/]/).pop() : ''; }
 const MODE_NAME = { plan: '规划', build: '构建', edit: '编辑', yolo: '全自动' };
@@ -307,14 +358,23 @@ async function api(path, opts) {
   return res.json();
 }
 
-async function fetchUsage() { // 今日用量徽标 + 7 天柱状图
+async function fetchUsage() { // 今日用量徽标 + 金额估算 + 7 天柱状图
   try {
     const j = await api('usage');
-    const t = j.summary?.today;
-    if (t) $('#usage').textContent = '今日 ' + t.turns + ' 回合 · ' + fmtTokens(t.totalTokens) + ' tokens';
+    store_.usageToday = j.summary?.today ?? null;
     store_.usageDaily = j.daily ?? [];
+    store_.usageWeekCost = store_.usageDaily.reduce((a, d) => a + costYuan(d), 0);
+    renderUsageBadges();
     render();
   } catch {}
+}
+
+function renderUsageBadges() {
+  const t = store_.usageToday;
+  $('#usage').textContent = t
+    ? '今日 ' + t.turns + ' 回合 · ' + fmtTokens(t.totalTokens) + ' tok · ≈' + fmtYuan(costYuan(t))
+    : '今日 —';
+  $('#weekCost').textContent = store_.usageDaily ? '7 天 ≈' + fmtYuan(store_.usageWeekCost ?? 0) : '—';
 }
 
 function feedPush(label) {
@@ -416,14 +476,15 @@ function render() {
       '<span class="dur">用时 ' + fmtDur(d.dur) + '</span><time>' + fmtClock(d.at) + '</time></div>' + tail + '</div>';
   }).join('');
 
-  // 近 7 天用量柱状图
+  // 近 7 天用量柱状图（tooltip 带当日估算金额）
   const DAY_LBL = ['日', '一', '二', '三', '四', '五', '六'];
   $('#usageChart').innerHTML = (store_.usageDaily ?? []).map((d, i) => {
-    const max = Math.max(...(store_.usageDaily ?? []).map((x) => x.totalTokens), 1);
+    const all = store_.usageDaily ?? [];
+    const max = Math.max(...all.map((x) => x.totalTokens), 1);
     const h = Math.max(3, Math.round((d.totalTokens / max) * 100));
     const dt = new Date(d.date + 'T00:00:00');
-    const lbl = i === (store_.usageDaily.length - 1) ? '今天' : DAY_LBL[dt.getDay()];
-    return '<div class="col' + (i === store_.usageDaily.length - 1 ? ' today' : '') + '" title="' + esc(d.date) + '：' + d.turns + ' 回合 · ' + fmtTokens(d.totalTokens) + ' tokens">' +
+    const lbl = i === all.length - 1 ? '今天' : DAY_LBL[dt.getDay()];
+    return '<div class="col' + (i === all.length - 1 ? ' today' : '') + '" title="' + esc(d.date) + '：' + d.turns + ' 回合 · ' + fmtTokens(d.totalTokens) + ' tok · ≈' + fmtYuan(costYuan(d)) + '">' +
       '<div class="bars"><div class="bar" style="height:' + h + '%"></div></div>' +
       '<div class="lbl">' + lbl + '</div></div>';
   }).join('');
@@ -548,28 +609,90 @@ document.addEventListener('click', async (e) => {
   }
 });
 
-// ---------- 任务完成系统通知 ----------
+// ---------- 任务完成提醒（分层：Tauri 原生通知 → 浏览器通知 → 提示音+页面横幅）----------
 const notifyOn = () => localStorage.getItem('miniNotify') === '1';
 function setNotifyBtn() { $('#notifyBtn').textContent = '🔔 提醒：' + (notifyOn() ? '开' : '关'); }
+
+function notifyChannel() { // 当前环境可用的通知通道
+  if (window.__TAURI__?.notification) return 'tauri';
+  if ('Notification' in window && Notification.permission === 'granted') return 'web';
+  return 'fallback';
+}
+
+// 提示音：AudioContext 需要用户手势解锁，在任何点击上静默恢复
+let audioCtx = null;
+document.addEventListener('pointerdown', () => {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  } catch {}
+}, { capture: true });
+function beep() {
+  try {
+    if (!audioCtx || audioCtx.state !== 'running') return;
+    for (const [f, t0] of [[880, 0], [660, 0.18]]) {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.frequency.value = f;
+      g.gain.setValueAtTime(0.12, audioCtx.currentTime + t0);
+      g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + t0 + 0.16);
+      o.connect(g).connect(audioCtx.destination);
+      o.start(audioCtx.currentTime + t0);
+      o.stop(audioCtx.currentTime + t0 + 0.17);
+    }
+  } catch {}
+}
+
+function banner(title, body) { // 页面内横幅（点击可聚焦窗口）
+  const box = document.createElement('div');
+  box.className = 'toast';
+  box.innerHTML = '<div class="t">' + esc(title) + '</div><div class="b">' + esc(body) + '</div>';
+  box.addEventListener('click', () => { window.focus(); box.remove(); });
+  $('#toasts').appendChild(box);
+  setTimeout(() => box.remove(), 10000);
+}
+
 $('#notifyBtn').addEventListener('click', async () => {
   if (notifyOn()) {
     localStorage.setItem('miniNotify', '0');
   } else {
-    if (!('Notification' in window)) { store_.feed.unshift({ at: Date.now(), label: '此环境不支持浏览器通知', count: 1 }); render(); return; }
-    let perm = Notification.permission;
-    if (perm === 'default') perm = await Notification.requestPermission();
-    if (perm !== 'granted') { store_.feed.unshift({ at: Date.now(), label: '浏览器通知权限被拒绝，无法开启提醒', count: 1 }); render(); return; }
+    let mode = 'fallback';
+    if (window.__TAURI__?.notification) {
+      try {
+        const n = window.__TAURI__.notification;
+        if (!(await n.isPermissionGranted?.())) await n.requestPermission?.();
+        mode = 'tauri';
+      } catch { mode = 'fallback'; }
+    } else if ('Notification' in window) {
+      let perm = Notification.permission;
+      if (perm === 'default') {
+        try { perm = await Notification.requestPermission(); } catch { perm = 'denied'; }
+      }
+      mode = perm === 'granted' ? 'web' : 'fallback';
+    }
+    localStorage.setItem('miniNotifyMode', mode);
     localStorage.setItem('miniNotify', '1');
-    feedPush('完成提醒已开启');
+    feedPush(mode === 'fallback'
+      ? '完成提醒已开启（此环境无系统通知，改用提示音 + 页面横幅）'
+      : '完成提醒已开启（系统通知）');
+    try { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume(); } catch {}
   }
   setNotifyBtn();
   render();
 });
+
 function notifyTurnDone(title, durMs) {
-  if (!notifyOn() || !('Notification' in window) || Notification.permission !== 'granted') return;
+  if (!notifyOn()) return;
+  const body = '用时 ' + fmtDur(durMs || 0) + ' · ' + fmtClock(Date.now());
+  beep();
+  banner('✅ 任务完成：' + title, body);
+  const mode = localStorage.getItem('miniNotifyMode');
   try {
-    const n = new Notification('✅ 任务完成：' + title, { body: '用时 ' + fmtDur(durMs || 0) + ' · ' + fmtClock(Date.now()), tag: 'zcode-mini-done', silent: false });
-    n.onclick = () => { window.focus(); n.close(); };
+    if (mode === 'tauri' && window.__TAURI__?.notification) {
+      window.__TAURI__.notification.sendNotification({ title: '✅ 任务完成：' + title, body });
+    } else if (mode === 'web' && 'Notification' in window && Notification.permission === 'granted') {
+      const n = new Notification('✅ 任务完成：' + title, { body, tag: 'zcode-mini-done' });
+      n.onclick = () => { window.focus(); n.close(); };
+    }
   } catch {}
 }
 
@@ -628,6 +751,21 @@ document.addEventListener('click', async (e) => {
     render();
   }
 });
+
+// ---------- 单价设置 ----------
+$('#priceBtn').addEventListener('click', () => $('#priceCfg').classList.toggle('show'));
+for (const [id, key, def] of [['pcIn', 'in', 8], ['pcCache', 'cache', 2], ['pcOut', 'out', 28]]) {
+  const el = document.getElementById(id);
+  el.value = priceCfg()[key];
+  el.addEventListener('input', () => {
+    const v = parseFloat(el.value);
+    if (!Number.isFinite(v) || v < 0) return;
+    localStorage.setItem('miniPrice' + (key === 'in' ? 'In' : key === 'out' ? 'Out' : 'Cache'), String(v));
+    store_.usageWeekCost = (store_.usageDaily ?? []).reduce((a, d) => a + costYuan(d), 0);
+    renderUsageBadges();
+    render();
+  });
+}
 
 // ---------- 启动 ----------
 (async () => {

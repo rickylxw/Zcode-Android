@@ -1,0 +1,19 @@
+[package]
+name = "zcode-mini-tray"
+version = "0.1.0"
+edition = "2021"
+description = "ZCode mini 看板的系统托盘壳"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

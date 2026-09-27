@@ -45,6 +45,7 @@ class ChatViewModel(
     private var pendingRequestId: String? = null
 
     init {
+        container.activeChatSessionId = sessionId
         load()
         loadModels()
         container.socket.ensureConnected()
@@ -61,6 +62,10 @@ class ChatViewModel(
                 }
             }
         }
+    }
+
+    override fun onCleared() {
+        if (container.activeChatSessionId == sessionId) container.activeChatSessionId = null
     }
 
     fun consumeNotice() {
@@ -231,6 +236,16 @@ class ChatViewModel(
                     }
                     ev.outputTokens?.let { append(if (isEmpty()) "" else "  "); append("↓${com.zcode.mobile.ui.common.fmtTokens(it)}") }
                     ev.totalTokens?.let { append(if (isEmpty()) "" else "  "); append("计 ${com.zcode.mobile.ui.common.fmtTokens(it)} tokens") }
+                    // 预估费用（按智谱牌价，见 data/TokenPricing.kt）
+                    if (ev.inputTokens != null && ev.outputTokens != null) {
+                        val yuan = com.zcode.mobile.data.TokenPricing.costCny(
+                            modelId = _state.value.selectedModel,
+                            inputTokens = ev.inputTokens,
+                            outputTokens = ev.outputTokens,
+                            cacheReadTokens = ev.cacheReadTokens ?: 0,
+                        )
+                        append("  ").append(com.zcode.mobile.data.TokenPricing.fmtCny(yuan))
+                    }
                 }.ifBlank { null }
                 _state.value = _state.value.copy(
                     sending = false,

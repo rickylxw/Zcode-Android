@@ -36,6 +36,10 @@ class AppContainer(app: Application) {
     @Volatile
     var appInForeground: Boolean = false
 
+    /** 当前打开的聊天页会话（ChatViewModel init/onCleared 维护）；全局弹窗据此避免与页内对话框重复 */
+    @Volatile
+    var activeChatSessionId: String? = null
+
     /**
      * 全局事件监听：App 打开即连 WS；退到后台后收到「任务完成 / 审批请求 / 任务开始」弹系统通知。
      * 轻量实现——通知只在 App 进程存活期间有效（WS 随进程保持）；进程被系统杀掉后通知停止，

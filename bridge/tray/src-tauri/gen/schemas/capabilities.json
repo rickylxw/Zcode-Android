@@ -1,0 +1,1 @@
+{"remote-mini":{"identifier":"remote-mini","description":"看板远程页面（桥接 /mini）允许调用通知插件：任务完成弹系统通知","remote":{"urls":["http://127.0.0.1","http://127.0.0.1:*","http://localhost","http://localhost:*"]},"local":true,"windows":["mini"],"permissions":["core:default","notification:default"]}}

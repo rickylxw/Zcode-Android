@@ -515,6 +515,9 @@ export function usageDaily(days = 7) {
         `SELECT COUNT(*) AS turns,
                 COALESCE(SUM(input_tokens),0) AS inputTokens,
                 COALESCE(SUM(output_tokens),0) AS outputTokens,
+                COALESCE(SUM(reasoning_tokens),0) AS reasoningTokens,
+                COALESCE(SUM(cache_read_input_tokens),0) AS cacheReadTokens,
+                COALESCE(SUM(cache_creation_input_tokens),0) AS cacheWriteTokens,
                 COALESCE(SUM(computed_total_tokens),0) AS totalTokens
          FROM turn_usage WHERE status = 'completed' AND started_at >= ? AND started_at < ?`
       )
@@ -524,6 +527,9 @@ export function usageDaily(days = 7) {
       turns: row.turns,
       inputTokens: row.inputTokens,
       outputTokens: row.outputTokens,
+      reasoningTokens: row.reasoningTokens,
+      cacheReadTokens: row.cacheReadTokens,
+      cacheWriteTokens: row.cacheWriteTokens,
       totalTokens: row.totalTokens,
     });
   }

@@ -68,15 +68,21 @@ const server = http.createServer((req, res) => {
   }
   if (url.pathname === '/api/usage') {
     const day = 24 * 3600_000, base = 1_843_200;
-    const daily = [0.35, 0.6, 0.45, 0.9, 0.2, 0.7, 1].map((k, i) => ({
-      date: new Date(Date.now() - (6 - i) * day).toISOString().slice(0, 10),
-      turns: Math.round(23 * k),
-      inputTokens: Math.round(base * k * 0.8),
-      outputTokens: Math.round(base * k * 0.2),
-      totalTokens: Math.round(base * k),
-    }));
+    const daily = [0.35, 0.6, 0.45, 0.9, 0.2, 0.7, 1].map((k, i) => {
+      const inputTokens = Math.round(base * k * 0.8);
+      return {
+        date: new Date(Date.now() - (6 - i) * day).toISOString().slice(0, 10),
+        turns: Math.round(23 * k),
+        inputTokens,
+        outputTokens: Math.round(base * k * 0.2),
+        reasoningTokens: 0,
+        cacheReadTokens: Math.round(inputTokens * 0.7),
+        cacheWriteTokens: Math.round(inputTokens * 0.05),
+        totalTokens: Math.round(base * k),
+      };
+    });
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ summary: { today: { turns: 23, totalTokens: base }, last7Days: {}, allTime: {} }, daily }));
+    return res.end(JSON.stringify({ summary: { today: { ...daily[daily.length - 1] } }, daily }));
   }
   if (url.pathname === '/api/projects') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
