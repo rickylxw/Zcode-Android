@@ -36,3 +36,4 @@ bridge/test/out/
 bridge/tray/node_modules/
 bridge/tray/src-tauri/target/
 bridge/tray/*.exe
+bridge/server.err.log

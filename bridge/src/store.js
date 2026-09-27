@@ -446,8 +446,9 @@ export function moveQueued(sessionId, id, dir) {
 }
 
 /**
- * Token 用量汇总（来自 turn_usage 表，status=completed 的回合）。
- * 返回 今日 / 近7天 / 累计 三组：回合数、输入/输出/推理/缓存/总 token、总时长。
+ * Token 用量汇总（来自 model_usage 表，全部模型请求——与 ZCode 客户端显示的用量同口径，
+ * 含被取消/出错的回合与重试；turn_usage 净额口径会比客户端少 ~20%）。
+ * 返回 今日 / 近7天 / 累计 三组：请求数（按去重回合计）、输入/输出/推理/缓存/总 token、总时长。
  */
 export function usageSummary() {
   const dayMs = 24 * 3600 * 1000;
@@ -456,33 +457,33 @@ export function usageSummary() {
   localMidnight.setHours(0, 0, 0, 0);
 
   const agg = (since) => {
-    const row = since == null
-      ? getDb()
-          .prepare(
-            `SELECT COUNT(*) AS turns,
-                    COALESCE(SUM(input_tokens),0) AS inputTokens,
-                    COALESCE(SUM(output_tokens),0) AS outputTokens,
-                    COALESCE(SUM(reasoning_tokens),0) AS reasoningTokens,
-                    COALESCE(SUM(cache_read_input_tokens),0) AS cacheRead,
-                    COALESCE(SUM(cache_creation_input_tokens),0) AS cacheWrite,
-                    COALESCE(SUM(computed_total_tokens),0) AS totalTokens,
-                    COALESCE(SUM(duration_ms),0) AS durationMs
-             FROM turn_usage WHERE status = 'completed'`
-          )
-          .get()
-      : getDb()
-          .prepare(
-            `SELECT COUNT(*) AS turns,
-                    COALESCE(SUM(input_tokens),0) AS inputTokens,
-                    COALESCE(SUM(output_tokens),0) AS outputTokens,
-                    COALESCE(SUM(reasoning_tokens),0) AS reasoningTokens,
-                    COALESCE(SUM(cache_read_input_tokens),0) AS cacheRead,
-                    COALESCE(SUM(cache_creation_input_tokens),0) AS cacheWrite,
-                    COALESCE(SUM(computed_total_tokens),0) AS totalTokens,
-                    COALESCE(SUM(duration_ms),0) AS durationMs
-             FROM turn_usage WHERE status = 'completed' AND started_at >= ?`
-          )
-          .get(since);
+    const cond = since == null ? '' : ' WHERE started_at >= ?';
+    const row = getDb()
+      .prepare(
+        `SELECT COUNT(DISTINCT turn_id) AS turns,
+                COALESCE(SUM(input_tokens),0) AS inputTokens,
+                COALESCE(SUM(output_tokens),0) AS outputTokens,
+                COALESCE(SUM(reasoning_tokens),0) AS reasoningTokens,
+                COALESCE(SUM(cache_read_input_tokens),0) AS cacheRead,
+                COALESCE(SUM(cache_creation_input_tokens),0) AS cacheWrite,
+                COALESCE(SUM(computed_total_tokens),0) AS totalTokens,
+                COALESCE(SUM(duration_ms),0) AS durationMs
+         FROM model_usage${cond}`
+      )
+      .get(...(since == null ? [] : [since]));
+    // 按模型分桶（手机端分模型计价：5.3 与 Flash 价差极大，混算会严重失真）
+    const byModel = getDb()
+      .prepare(
+        `SELECT model_id AS modelId,
+                COUNT(*) AS turns,
+                COALESCE(SUM(input_tokens),0) AS inputTokens,
+                COALESCE(SUM(output_tokens),0) AS outputTokens,
+                COALESCE(SUM(cache_read_input_tokens),0) AS cacheReadTokens,
+                COALESCE(SUM(cache_creation_input_tokens),0) AS cacheWriteTokens
+         FROM model_usage${cond}
+         GROUP BY model_id ORDER BY inputTokens DESC`
+      )
+      .all(...(since == null ? [] : [since]));
     return {
       turns: row.turns,
       inputTokens: row.inputTokens,
@@ -492,6 +493,7 @@ export function usageSummary() {
       cacheWriteTokens: row.cacheWrite,
       totalTokens: row.totalTokens,
       durationMs: row.durationMs,
+      byModel,
     };
   };
 
@@ -502,7 +504,7 @@ export function usageSummary() {
   };
 }
 
-/** 按天分列的近 n 天用量（用于面板柱状/明细） */
+/** 按天分列的近 n 天用量（用于面板柱状/明细），口径同 usageSummary（model_usage 全量） */
 export function usageDaily(days = 7) {
   const dayMs = 24 * 3600 * 1000;
   const out = [];
@@ -512,14 +514,14 @@ export function usageDaily(days = 7) {
     const start = dayStart.getTime() - i * dayMs;
     const row = getDb()
       .prepare(
-        `SELECT COUNT(*) AS turns,
+        `SELECT COUNT(DISTINCT turn_id) AS turns,
                 COALESCE(SUM(input_tokens),0) AS inputTokens,
                 COALESCE(SUM(output_tokens),0) AS outputTokens,
                 COALESCE(SUM(reasoning_tokens),0) AS reasoningTokens,
                 COALESCE(SUM(cache_read_input_tokens),0) AS cacheReadTokens,
                 COALESCE(SUM(cache_creation_input_tokens),0) AS cacheWriteTokens,
                 COALESCE(SUM(computed_total_tokens),0) AS totalTokens
-         FROM turn_usage WHERE status = 'completed' AND started_at >= ? AND started_at < ?`
+         FROM model_usage WHERE started_at >= ? AND started_at < ?`
       )
       .get(start, start + dayMs);
     out.push({
@@ -536,8 +538,43 @@ export function usageDaily(days = 7) {
   return out;
 }
 
-function rowToSession(r) {
+/** 会话最近一个完成回合的按模型用量（看板「最近完成」用）。无记录返回 null。 */
+export function lastTurnModelUsage(sessionId) {
+  const turn = getDb()
+    .prepare(
+      `SELECT turn_id FROM turn_usage WHERE session_id = ? AND status = 'completed' ORDER BY completed_at DESC LIMIT 1`
+    )
+    .get(sessionId);
+  if (!turn) return null;
+  const rows = getDb()
+    .prepare(
+      `SELECT model_id, provider_id, COUNT(*) AS requests,
+              SUM(input_tokens) AS inputTokens, SUM(output_tokens) AS outputTokens,
+              SUM(reasoning_tokens) AS reasoningTokens,
+              SUM(cache_creation_input_tokens) AS cacheWriteTokens,
+              SUM(cache_read_input_tokens) AS cacheReadTokens,
+              SUM(computed_total_tokens) AS totalTokens
+       FROM model_usage WHERE turn_id = ? GROUP BY model_id ORDER BY totalTokens DESC`
+    )
+    .all(turn.turn_id);
+  if (!rows.length) return null;
   return {
+    turnId: turn.turn_id,
+    models: rows.map((r) => ({
+      model: r.model_id,
+      provider: r.provider_id,
+      requests: r.requests,
+      inputTokens: r.inputTokens,
+      outputTokens: r.outputTokens,
+      reasoningTokens: r.reasoningTokens,
+      cacheReadTokens: r.cacheReadTokens,
+      cacheWriteTokens: r.cacheWriteTokens,
+      totalTokens: r.totalTokens,
+    })),
+  };
+}
+
+function rowToSession(r) {  return {
     id: r.id,
     title: r.title,
     directory: r.directory,

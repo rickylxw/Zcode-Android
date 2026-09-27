@@ -273,13 +273,25 @@ private fun UsageCell(title: String, b: com.zcode.mobile.data.UsageBucket, modif
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        // 预估费用：按 GLM-5.3 牌价估算（价格表见 data/TokenPricing.kt）
-        val cny = com.zcode.mobile.data.TokenPricing.costCny(
-            modelId = "GLM-5.3",
-            inputTokens = b.inputTokens,
-            outputTokens = b.outputTokens,
-            cacheReadTokens = b.cacheReadTokens,
-        )
+        // 预估费用：优先按模型分桶逐个计价（5.3 与 Flash 价差大，混算会严重失真）；
+        // 旧版 bridge 无 byModel 时回退按 GLM-5.3 整桶估算
+        val cny = if (b.byModel.isNotEmpty()) {
+            b.byModel.sumOf { m ->
+                com.zcode.mobile.data.TokenPricing.costCny(
+                    modelId = m.modelId,
+                    inputTokens = m.inputTokens,
+                    outputTokens = m.outputTokens,
+                    cacheReadTokens = m.cacheReadTokens,
+                )
+            }
+        } else {
+            com.zcode.mobile.data.TokenPricing.costCny(
+                modelId = "GLM-5.3",
+                inputTokens = b.inputTokens,
+                outputTokens = b.outputTokens,
+                cacheReadTokens = b.cacheReadTokens,
+            )
+        }
         Text(
             com.zcode.mobile.data.TokenPricing.fmtCny(cny),
             style = MaterialTheme.typography.labelMedium,

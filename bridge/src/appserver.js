@@ -393,14 +393,16 @@ export function appServerTurn({ sessionId = null, directory, prompt, mode = 'yol
 async function run(turn, prompt, mode, model) {
   const workspace = { workspaceKey: turn.directory, workspacePath: turn.directory };
 
-  // 1) 取得/恢复运行时会话
+  // 1) 取得/恢复运行时会话（顺带捕获会话当前模型，供费用估算）
   if (turn.sessionId) {
-    await call('session/resume', { sessionId: turn.sessionId, workspace }, 60000);
+    const resumed = await call('session/resume', { sessionId: turn.sessionId, workspace }, 60000);
+    turn.model = resumed?.settings?.model?.current?.modelId ?? turn.model;
   } else {
     const created = await call('session/create', { workspace }, 60000);
     const sid = created?.session?.sessionId;
     if (!sid) throw new Error('session/create 未返回 sessionId: ' + JSON.stringify(created).slice(0, 300));
     turn.sessionId = sid;
+    turn.model = created?.session?.model?.modelId ?? turn.model;
     turnsBySession.set(sid, turn);
   }
   turnsBySession.set(turn.sessionId, turn);
@@ -421,6 +423,7 @@ async function run(turn, prompt, mode, model) {
     try {
       const provider = listModels()?.provider ?? 'bigmodel-api-2';
       await call('session/setModel', { sessionId: sid, model: { providerId: provider, modelId: model, options: { reasoningLevel: 'max' } } }, 15000);
+      turn.model = model; // 用户指定了模型且设置成功，计价用它
     } catch (e) {
       console.warn('[appserver] setModel 失败（忽略）:', e.message);
     }
@@ -484,6 +487,7 @@ function dispatchEvent(msg) {
         sessionId: sid,
         response: payload.response ?? turn.streamText,
         usage: payload.usage ?? null,
+        model: turn.model ?? null,
         projection: null,
       });
     }

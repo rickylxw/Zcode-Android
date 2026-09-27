@@ -119,9 +119,21 @@ const server = http.createServer((req, res) => {
   // 演示触发器：完成一个任务 / 把任务事件做旧（停滞提示）
   if (url.pathname === '/mock/complete' && sessions.length > 1) {
     const s = sessions[1];
-    broadcast({ type: 'progress', sessionId: s.sessionId, jobId: null, event: { kind: 'turn_completed', toolName: null, durationMs: Date.now() - s.since, timestamp: new Date().toISOString() } });
+    const dur = Date.now() - s.since;
+    broadcast({ type: 'progress', sessionId: s.sessionId, jobId: null, event: { kind: 'turn_completed', toolName: null, durationMs: dur, timestamp: new Date().toISOString() } });
     sessions.splice(1, 1);
     if (watchers.size) broadcast({ type: 'status', ...snapshot() });
+    // 模拟落库延迟：1.5s 后回查到的按模型用量
+    setTimeout(() => {
+      broadcast({
+        type: 'turn_done',
+        sessionId: s.sessionId,
+        usage: {
+          turnId: 'turn_mockdone',
+          models: [{ model: 'GLM-5.3-Flash', provider: 'bigmodel-api-2', requests: 9, inputTokens: 468000, outputTokens: 5200, reasoningTokens: 0, cacheReadTokens: 450000, cacheWriteTokens: 8000, totalTokens: 473200 }],
+        },
+      });
+    }, 1500);
     console.log('[mock] 已完成任务:', s.title);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end('{"ok":true}');
