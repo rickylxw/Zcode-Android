@@ -397,6 +397,28 @@ async function run(turn, prompt, mode, model) {
   if (turn.sessionId) {
     const resumed = await call('session/resume', { sessionId: turn.sessionId, workspace }, 60000);
     turn.model = resumed?.settings?.model?.current?.modelId ?? turn.model;
+    // 模型选择自愈：会话存的 provider 实例可能已失效——CLI 升级换实例，或 9/22 起桌面端
+    // 用 account:* 作用域实例而独立运行时无法物化（Model creation failed）。
+    // 当前选择不在可用列表时切换到用户指定模型或第一个非 account 可用模型
+    // （等价无头引擎 selection.js 的自愈，在协议层完成）。
+    const avail = resumed?.settings?.model?.available ?? [];
+    const cur = resumed?.settings?.model?.current;
+    const curOk = cur && avail.some((a) => a.ref?.providerId === cur.providerId && a.ref?.modelId === cur.modelId);
+    if (!curOk && avail.length) {
+      const fallbackRef =
+        (model && { providerId: listModels()?.provider, modelId: model }) ??
+        avail.find((a) => a.ref && !String(a.ref.providerId).startsWith('account:'))?.ref ??
+        avail[0]?.ref;
+      if (fallbackRef?.modelId) {
+        try {
+          await call('session/setModel', { sessionId: turn.sessionId, model: { providerId: fallbackRef.providerId, modelId: fallbackRef.modelId, options: { reasoningLevel: 'max' } } }, 15000);
+          turn.model = fallbackRef.modelId;
+          console.log(`[appserver] 会话模型选择不可用（${cur?.providerId ?? '?'}/${cur?.modelId ?? '?'}），已自愈切换到 ${fallbackRef.providerId}/${fallbackRef.modelId}`);
+        } catch (e) {
+          console.warn('[appserver] 模型自愈 setModel 失败（忽略）:', e.message);
+        }
+      }
+    }
   } else {
     const created = await call('session/create', { workspace }, 60000);
     const sid = created?.session?.sessionId;
@@ -440,7 +462,16 @@ async function run(turn, prompt, mode, model) {
     await call('session/send', { sessionId: sid, content: prompt }, 20000);
   } catch (e) {
     if (e.code === -32010) throw Object.assign(new Error('该会话正在执行中，请等待完成或先停止'), { code: 'BUSY' });
-    throw e;
+    // 模型物化仍然失败（如自愈被跳过但 account: 选择残留）：强制切到本地可用模型并重试一次
+    if (/Model creation failed|Select a model/i.test(e.message ?? '')) {
+      const lm = listModels();
+      if (lm?.models?.length) {
+        console.warn(`[appserver] 发送时模型物化失败，强制切换到 ${lm.provider}/${lm.models[0]} 后重试`);
+        await call('session/setModel', { sessionId: sid, model: { providerId: lm.provider, modelId: lm.models[0], options: { reasoningLevel: 'max' } } }, 15000).catch(() => {});
+        turn.model = lm.models[0];
+        await call('session/send', { sessionId: sid, content: prompt }, 20000);
+      } else throw e;
+    } else throw e;
   }
 }
 
@@ -492,8 +523,14 @@ function dispatchEvent(msg) {
       });
     }
   } else if (ev.type === 'turn.failed') {
-    const t = ev.payload?.message ?? ev.payload?.error ?? '未知错误';
-    turn.reject(new Error(`回合失败: ${typeof t === 'string' ? t : JSON.stringify(t)}`));
+    // payload 可能是 {error:{message,code,...}} 或平铺结构；只取人类可读部分，
+    // 不把含堆栈的整块 JSON 甩给手机端
+    const p = ev.payload ?? {};
+    const err = p.error && typeof p.error === 'object' ? p.error : p;
+    const msg = err.message ?? err.underlyingErrorMessage ?? err.detail ?? p.message ?? '未知错误';
+    const code = err.code ?? p.code;
+    const text = typeof msg === 'string' ? msg : JSON.stringify(msg);
+    turn.reject(new Error(`回合失败: ${text}${code ? ` (${code})` : ''}`));
   }
 }
 
