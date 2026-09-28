@@ -15,10 +15,12 @@ object TokenPricing {
     )
 
     private val TABLE = mapOf(
-        "GLM-5.3-Flash" to ModelPrice(input = 0.2, cacheRead = 0.04, output = 1.0),
-        "GLM-5.3" to ModelPrice(input = 4.0, cacheRead = 0.8, output = 16.0),
-        "GLM-4.5-Flash" to ModelPrice(input = 0.2, cacheRead = 0.04, output = 1.0),
-        "GLM-4.5" to ModelPrice(input = 4.0, cacheRead = 0.8, output = 16.0),
+        // 2026-09 查证的 bigmodel.cn 牌价（GLM-5.3 与 GLM-5.2 同价）：
+        // 5.3: 输入 ¥8/M、缓存命中 ¥2/M、输出 ¥28/M；Flash: 输入 ~¥0.8/M、缓存 ~¥0.21/M、输出 ~¥2.8/M
+        "GLM-5.3-Flash" to ModelPrice(input = 0.8, cacheRead = 0.21, output = 2.8),
+        "GLM-5.3" to ModelPrice(input = 8.0, cacheRead = 2.0, output = 28.0),
+        "GLM-4.5-Flash" to ModelPrice(input = 0.8, cacheRead = 0.21, output = 2.8),
+        "GLM-4.5" to ModelPrice(input = 8.0, cacheRead = 2.0, output = 28.0),
     )
     private val DEFAULT = TABLE["GLM-5.3"]!!
 

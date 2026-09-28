@@ -295,7 +295,7 @@ function onLogEvent(sessionId, event) {
     if (ENGINE === 'appserver') appserver.appServerYieldToForeignTurn(sessionId, event.turnId);
     turnStarts.set(sessionId, Date.parse(event.timestamp) || Date.now()); // 看板运行时长的真实起点
     // 桌面端/CLI 发起的回合：广播给手机端（会话列表运行标记 + 聊天页进入运行态）
-    broadcast({ type: 'session_updated', sessionId });
+    broadcast({ type: 'session_updated', sessionId, reason: 'turn_started' });
     broadcastStatus();
     ensurePassivePump(sessionId);
   }
@@ -305,7 +305,7 @@ function onLogEvent(sessionId, event) {
     stopPassivePump(sessionId);
     scheduleTurnDone(sessionId);
     // 关键同步点：回合结束必须广播，否则正在看该会话的手机端不知道要拉取新消息
-    broadcast({ type: 'session_updated', sessionId });
+    broadcast({ type: 'session_updated', sessionId, reason: 'turn_completed' });
     broadcastStatus();
     setTimeout(() => tryDeliverQueued().catch(() => {}), 3000);
   }
@@ -337,14 +337,14 @@ function onAppServerEvent(sessionId, event) {
   recordEvent(sessionId, event);
   markRunning(sessionId);
   if (event.kind === 'turn_started') {
-    broadcast({ type: 'session_updated', sessionId }); // 非发起端的观看者也要进入运行态
+    broadcast({ type: 'session_updated', sessionId, reason: 'turn_started' }); // 非发起端的观看者也要进入运行态
     broadcastStatus();
   }
   if (event.kind === 'turn_completed') {
     runningSessions.delete(sessionId);
     turnStarts.delete(sessionId);
     scheduleTurnDone(sessionId);
-    broadcast({ type: 'session_updated', sessionId }); // 非发起端的观看者拉取最终消息
+    broadcast({ type: 'session_updated', sessionId, reason: 'turn_completed' }); // 非发起端的观看者拉取最终消息
     broadcastStatus();
     setTimeout(() => tryDeliverQueued().catch(() => {}), 3000);
   }

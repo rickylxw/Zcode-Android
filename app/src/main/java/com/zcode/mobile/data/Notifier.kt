@@ -25,8 +25,16 @@ class Notifier(private val context: Context) {
             CHANNEL_ID,
             "任务动态",
             NotificationManager.IMPORTANCE_DEFAULT,
-        ).apply { description = "电脑端任务的开始/完成与审批请求" }
-        context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        ).apply { description = "电脑端任务的开始/完成" }
+        // 审批/提问有 120 秒超时，用高优先级通道弹横幅
+        val urgent = NotificationChannel(
+            CHANNEL_URGENT_ID,
+            "审批与提问",
+            NotificationManager.IMPORTANCE_HIGH,
+        ).apply { description = "电脑端请求审批或提问（120 秒内需应答）" }
+        val nm = context.getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(channel)
+        nm.createNotificationChannel(urgent)
     }
 
     /** Android 13+ 通知运行时权限是否已授予 */
@@ -35,7 +43,8 @@ class Notifier(private val context: Context) {
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
 
-    fun notify(id: Int, title: String, text: String) {
+    /** urgent = 走高优先级通道（横幅 + 声音），用于审批请求 */
+    fun notify(id: Int, title: String, text: String, urgent: Boolean = false) {
         if (!permissionGranted()) return
         val open = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -44,10 +53,11 @@ class Notifier(private val context: Context) {
             context, id, open,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val n = NotificationCompat.Builder(context, CHANNEL_ID)
+        val n = NotificationCompat.Builder(context, if (urgent) CHANNEL_URGENT_ID else CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(title)
             .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setAutoCancel(true)
             .setContentIntent(pi)
             .build()
@@ -59,6 +69,7 @@ class Notifier(private val context: Context) {
 
     companion object {
         private const val CHANNEL_ID = "bridge_events"
+        private const val CHANNEL_URGENT_ID = "bridge_approval"
 
         /** 通知 id 分组：审批请求用固定前缀位，任务完成用 sessionId 哈希，避免互相覆盖 */
         fun approvalId(requestId: String) = 1_000_000 + requestId.hashCode()

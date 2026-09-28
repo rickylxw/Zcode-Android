@@ -64,7 +64,7 @@ class BridgeSocket(private val settings: SettingsRepo) {
             val todos: List<TodoItemDto>? = null,
         ) : Event
 
-        data class SessionUpdated(val sessionId: String?) : Event
+        data class SessionUpdated(val sessionId: String?, val reason: String? = null) : Event
         data class Failure(val requestId: String?, val code: String?, val message: String) : Event
 
         /** 电脑端发来的交互请求：kind=permission（工具审批）| user_input（AskUserQuestion） */
@@ -251,7 +251,7 @@ class BridgeSocket(private val settings: SettingsRepo) {
                 )
             }
 
-            "session_updated" -> _events.tryEmit(Event.SessionUpdated(str("sessionId")))
+            "session_updated" -> _events.tryEmit(Event.SessionUpdated(str("sessionId"), str("reason")))
 
             "request" -> _events.tryEmit(
                 Event.InteractionRequest(
